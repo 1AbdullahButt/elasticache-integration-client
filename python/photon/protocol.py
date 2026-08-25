@@ -1,0 +1,133 @@
+"""RESP3 protocol layer for the Photon client.
+
+This module builds the two Photon commands and interprets their replies:
+
+- photon.config: submit configuration overrides, parse the resolved config reply.
+- photon.request: send an intercepted HTTP request (method, url, normalized headers,
+  body, metadata), parse the [status, headers, body] reply into a PhotonResponse.
+"""
+
+from __future__ import annotations
+
+import json
+from photon.exceptions import PhotonError
+from photon.models import PhotonRequest, PhotonResponse, ResolvedConfig
+from photon.resp import RespError, RespValue
+
+CONFIG_COMMAND = "photon.config"
+REQUEST_COMMAND = "photon.request"  # working name; may change before launch
+
+# Headers excluded from the normalized form (case-insensitive). Auth/volatile headers must not
+# affect the cache key or be forwarded.
+_EXCLUDED_HEADERS = frozenset(
+    {
+        "authorization",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-request-id",
+        "amz-sdk-request",
+    }
+)
+
+_MIN_STATUS = 100
+_MAX_STATUS = 599
+
+
+# --------------------------------------------------------------------------- #
+# Header normalization & request/response (de)serialization
+# --------------------------------------------------------------------------- #
+def normalize_headers(headers: dict[str, str]) -> bytes:
+    """Produce the deterministic normalized header string as bytes.
+
+    Lowercase names, drop excluded headers, trim values, sort by name, join ``name:value`` with
+    LF. Returns ``b""`` when no headers remain.
+    """
+    pairs = sorted(
+        (n, v)
+        for n, v in ((k.strip().lower(), v.strip()) for k, v in headers.items())
+        if n not in _EXCLUDED_HEADERS
+    )
+    return "\n".join(f"{n}:{v}" for n, v in pairs).encode()
+
+
+def _parse_headers(raw_headers: bytes) -> dict[str, str]:
+    """Parse a normalized header blob (LF-separated ``name:value``) into a dict."""
+    return {
+        key.strip(): value.strip()
+        for line in raw_headers.decode().split("\n")
+        for key, sep, value in [line.partition(":")]
+        if sep
+    }
+
+
+def serialize_config(overrides: dict) -> tuple[str, list[bytes]]:
+    """Build the ``photon.config`` command from an overrides dict."""
+    return CONFIG_COMMAND, [json.dumps(overrides, separators=(",", ":")).encode()]
+
+
+def parse_config_response(value: RespValue) -> ResolvedConfig:
+    """Parse the ``photon.config`` reply (a JSON bulk string) into a ResolvedConfig.
+
+    The reply is a JSON bulk string; a RESP-array shape is intentionally not supported.
+    """
+    if isinstance(value, RespError):
+        raise PhotonError(f"photon.config failed: {value}")
+    if not isinstance(value, bytes):
+        raise PhotonError(
+            f"Malformed config response: expected JSON bulk string, got {type(value).__name__}"
+        )
+    try:
+        raw = json.loads(value)
+    except (ValueError, TypeError) as exc:
+        raise PhotonError(f"Malformed config JSON: {value!r}") from exc
+    if not isinstance(raw, dict):
+        raise PhotonError(f"Config JSON must be an object, got {type(raw).__name__}")
+    return ResolvedConfig(
+        version=raw.get("version"),
+        refresh_interval=raw.get("refresh_interval"),
+        raw=raw,
+    )
+
+
+def serialize_request(request: PhotonRequest) -> tuple[str, list[bytes]]:
+    """Build the complete ``photon.request`` command from a PhotonRequest.
+
+    Args are ``[method, url, normalized_headers, body, metadata]``.
+    """
+    method = request.method.encode()
+    url = request.url.encode()
+    headers = normalize_headers(request.headers)
+    body = request.body
+    metadata = f"service={request.metadata.service}&op={request.metadata.operation}".encode()
+    return REQUEST_COMMAND, [method, url, headers, body, metadata]
+
+
+def parse_request_response(value: RespValue) -> PhotonResponse:
+    """Interpret a ``photon.request`` reply into a PhotonResponse.
+
+    Expects a 3-element array ``[status, headers, body]``. Raises :class:`PhotonError` on a
+    ``RespError`` reply, malformed shape, wrong element types, or out-of-range status.
+    """
+    if isinstance(value, RespError):
+        raise PhotonError(f"photon.request failed: {value}")
+    if not isinstance(value, list) or len(value) != 3:
+        raise PhotonError(
+            f"Malformed request response: expected 3-element array, got {type(value).__name__}"
+        )
+    status_raw, headers_raw, body_raw = value
+    if not isinstance(headers_raw, bytes) or not isinstance(body_raw, bytes):
+        raise PhotonError(
+            f"Malformed request response elements: "
+            f"headers={type(headers_raw).__name__}, body={type(body_raw).__name__}"
+        )
+    try:
+        status = int(status_raw)
+    except (TypeError, ValueError) as exc:
+        raise PhotonError(f"Invalid status code: {status_raw!r}") from exc
+    if not (_MIN_STATUS <= status <= _MAX_STATUS):
+        raise PhotonError(f"Status code out of range (100-599): {status}")
+    return PhotonResponse(
+        status_code=status,
+        headers=_parse_headers(headers_raw),
+        body=body_raw,
+    )
