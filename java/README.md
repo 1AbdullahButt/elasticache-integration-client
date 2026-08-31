@@ -13,8 +13,9 @@ and caller-provided override configuration remain in the normal SDK pipeline.
 try (PhotonClient.Result<DynamoDbClient> result = PhotonClient.builder()
         .endpoint("my-cache.serverless.use1.cache.amazonaws.com:6379")
         .authProvider(iamAuthProvider)
-        .build(DynamoDbClient.builder(), builder -> builder
-                .region(Region.US_EAST_1))) {
+        .origin(DynamoDbClient.builder(), builder -> builder
+                .region(Region.US_EAST_1))
+        .build()) {
     ListTablesResponse response = result.client().listTables();
 }
 ```
