@@ -9,8 +9,8 @@ expressions, never in this code.
 
 Each predicate is evaluated against a fixed request context — ``service``, ``operation``, ``method``,
 ``url``, ``headers``, ``body`` (parsed JSON) — with the predicate's ``vars`` (e.g. ``ops``,
-``allowed``) also in scope. A request routes to the cache when any predicate is ``true``;
-first-match-wins.
+``allowed``) also in scope. A variable may not reuse a context name; the context always wins. A
+request routes to the cache when any predicate is ``true``; first-match-wins.
 
 Anything this module cannot evaluate resolves to *don't route*, because an unrouted request is merely
 uncached while a mis-routed one is a correctness bug: an expression that fails to compile is dropped
@@ -23,44 +23,63 @@ import json
 import logging
 
 import celpy
+from celpy import celtypes
 
 from photon.models import PhotonRequest
 
 logger = logging.getLogger(__name__)
 
-# Maximum request body to parse for evaluation. Mirrors the proxy's
-# photon_max_request_body_bytes (512 KiB): a larger body is rejected server-side anyway, so parsing
-# it locally only to pass through wastes client CPU.
-_MAX_BODY_INSPECT_BYTES = 512 * 1024
+# Names the request context binds. A predicate's ``vars`` may not use them: the context describes
+# the request being evaluated, so letting a proxy-authored variable shadow it would let an expression
+# match a request it does not describe (a mis-route, the one failure mode this module must prevent).
+_CONTEXT_NAMES = frozenset({"service", "operation", "method", "url", "headers", "body"})
 
 
 class CompiledPredicate:
     """A compiled CEL program plus its bound variables, ready to evaluate per request."""
 
-    __slots__ = ("_program", "_vars")
+    __slots__ = ("_program", "_vars", "_warned_non_bool")
 
     def __init__(self, program: celpy.Runner, variables: dict) -> None:
         self._program = program
-        # Convert the bound variables to CEL values once, at construction.
-        self._vars = {name: celpy.json_to_cel(value) for name, value in variables.items()}
+        self._warned_non_bool = False
+        # Convert the bound variables to CEL values once, at construction. A variable colliding with
+        # a context name is dropped rather than allowed to shadow the request.
+        self._vars = {}
+        for name, value in variables.items():
+            if name in _CONTEXT_NAMES:
+                logger.warning("Ignoring predicate variable %r: reserved context name", name)
+                continue
+            self._vars[name] = celpy.json_to_cel(value)
 
     def matches(self, context: dict) -> bool:
         """Whether this predicate is ``true`` for ``context`` (CEL-typed request fields).
 
         Any evaluation error counts as no-match: the expression is proxy-authored, but a body shape
-        it did not anticipate must never route rather than raise into the request path.
+        it did not anticipate must never route rather than raise into the request path. So does a
+        result that is not a CEL boolean — an expression that is not a predicate cannot be one by
+        coercion, and every non-empty string, list or map is truthy.
         """
-        activation = {**context, **self._vars}
+        # Redundant with the constructor's filtering (vars cannot hold a context name), kept so the
+        # context still wins if that filtering is ever bypassed.
+        activation = {**self._vars, **context}
         try:
             result = self._program.evaluate(activation)
         except celpy.CELEvalError:
             return False
+        # Some celpy paths return the error rather than raising it; still a no-match, and not a
+        # non-boolean result to warn about.
         if isinstance(result, celpy.CELEvalError):
             return False
-        try:
-            return bool(result)
-        except (TypeError, ValueError):
+        if not isinstance(result, celtypes.BoolType):
+            if not self._warned_non_bool:
+                # Once per compiled predicate: the shape cannot change between requests.
+                logger.warning(
+                    "Ignoring predicate whose result is %s, not bool", type(result).__name__
+                )
+                self._warned_non_bool = True
             return False
+        return bool(result)
 
 
 def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
@@ -73,6 +92,9 @@ def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
     env = celpy.Environment()
     compiled: list[CompiledPredicate] = []
     for entry in _predicate_entries(raw_config):
+        if not isinstance(entry, dict):
+            logger.debug("Ignoring non-object predicate entry")
+            continue
         expr = entry.get("expr")
         if not isinstance(expr, str):
             logger.debug("Ignoring predicate without a string 'expr'")
@@ -89,7 +111,7 @@ def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
     return compiled
 
 
-def route(predicates: list[CompiledPredicate], request: PhotonRequest) -> bool:
+def should_route_to_photon(predicates: list[CompiledPredicate], request: PhotonRequest) -> bool:
     """True when ``request`` should go to the cache. First match wins; empty list routes nothing.
 
     Builds the request context once and reuses it across predicates.
@@ -114,6 +136,8 @@ def _build_context(request: PhotonRequest) -> dict:
     ``service``/``operation`` come from the metadata the SDK hook derived from the event name; their
     location differs per service, the event name does not. ``body`` is the parsed JSON object, or an
     empty map when the request has no JSON body (e.g. a non-DynamoDB service).
+
+    Every name here is reserved (see ``_CONTEXT_NAMES``).
     """
     return {
         "service": request.metadata.service,
@@ -128,12 +152,12 @@ def _build_context(request: PhotonRequest) -> dict:
 def _parse_body(body: object) -> dict:
     """Parse a request body into a JSON object, or ``{}`` when it cannot be inspected.
 
-    ``{}`` on: empty, oversized, non-JSON, valid JSON that is not an object, or a non-bytes/str body.
-    An expression referencing ``body.<field>`` then simply finds nothing and does not match.
+    ``{}`` on: empty, non-JSON, valid JSON that is not an object, or a non-bytes/str body. An
+    expression referencing ``body.<field>`` then simply finds nothing and does not match. Size is not
+    a reason: the body is parsed however large it is, and an oversized request is rejected by the
+    proxy, which passes it through to the origin service.
     """
     if not body or not isinstance(body, (bytes, str)):
-        return {}
-    if len(body) > _MAX_BODY_INSPECT_BYTES:
         return {}
     try:
         parsed = json.loads(body)

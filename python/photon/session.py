@@ -14,7 +14,7 @@ from __future__ import annotations
 from photon.connection import PhotonConnector
 from photon.exceptions import PhotonError
 from photon.models import PhotonRequest, PhotonResponse
-from photon.predicates import compile_predicates, route
+from photon.predicates import compile_predicates, should_route_to_photon
 from photon.protocol import (
     parse_config_response,
     parse_request_response,
@@ -74,7 +74,7 @@ class PhotonSession:
         :class:`PhotonResponse`, every failure raises), so ``None`` is unambiguous. Connector and
         protocol errors propagate.
         """
-        if not route(self._predicates, request):
+        if not should_route_to_photon(self._predicates, request):
             return None
         command, args = serialize_request(request)
         return parse_request_response(self._connector.execute(command, *args))
