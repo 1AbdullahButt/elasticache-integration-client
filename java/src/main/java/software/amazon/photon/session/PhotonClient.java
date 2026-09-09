@@ -149,7 +149,7 @@ public final class PhotonClient {
         private int port = 6379;
         private SSLContext sslContext;
         private Supplier<AuthCredentials> authProvider;
-        private Map<String, Object> configOverrides;
+        private Map<String, Object> overrides;
         private int connectTimeoutMs = 5000;
         private int initializationTimeoutMs = 5000;
         private int requestTimeoutMs = 5000;
@@ -231,8 +231,8 @@ public final class PhotonClient {
         /**
          * Set config overrides sent in the photon.config handshake (optional).
          */
-        public Builder configOverrides(Map<String, Object> configOverrides) {
-            this.configOverrides = configOverrides;
+        public Builder overrides(Map<String, Object> overrides) {
+            this.overrides = overrides;
             return this;
         }
 
@@ -455,7 +455,7 @@ public final class PhotonClient {
                     .port(resolvedEndpoint.getPort())
                     .sslContext(sslContext)
                     .authProvider(authProvider)
-                    .configOverrides(configOverrides)
+                    .overrides(overrides)
                     .connectTimeoutMs(connectTimeoutMs)
                     .initializationTimeoutMs(initializationTimeoutMs)
                     .requestTimeoutMs(requestTimeoutMs)
@@ -471,7 +471,7 @@ public final class PhotonClient {
                     .port(resolvedEndpoint.getPort())
                     .sslContext(sslContext)
                     .authProvider(authProvider)
-                    .configOverrides(configOverrides)
+                    .overrides(overrides)
                     .connectTimeoutMs(connectTimeoutMs)
                     .initializationTimeoutMs(initializationTimeoutMs)
                     .requestTimeoutMs(requestTimeoutMs)

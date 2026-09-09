@@ -8,7 +8,7 @@ import software.amazon.photon.exception.PhotonError;
 import software.amazon.photon.mock.MockCache;
 import software.amazon.photon.mock.MockTlsServer;
 import software.amazon.photon.mock.Reply;
-import software.amazon.photon.connection.PhotonConnection;
+import software.amazon.photon.connection.PhotonConnector;
 import software.amazon.photon.model.PhotonRequest;
 import software.amazon.photon.model.PhotonResponse;
 import software.amazon.photon.model.RequestMetadata;
@@ -46,8 +46,8 @@ class PhotonSessionTest {
         server.close();
     }
 
-    private PhotonConnection createConnection() {
-        return new PhotonConnection("localhost", server.getPort(), clientSslContext);
+    private PhotonConnector createConnection() {
+        return new PhotonConnector("localhost", server.getPort(), clientSslContext);
     }
 
     // === Lifecycle tests ===
@@ -218,13 +218,13 @@ class PhotonSessionTest {
     // === Config tests ===
 
     @Test
-    void getResolvedConfig_afterOpen_returnsConfig() {
+    void getConfig_afterOpen_returnsConfig() {
         PhotonSession session = new PhotonSession(createConnection(), TEST_USER, TEST_TOKEN);
-        assertNull(session.getResolvedConfig());
+        assertNull(session.getConfig());
 
         session.open();
-        assertNotNull(session.getResolvedConfig());
-        assertEquals("1.0", session.getResolvedConfig().getVersion());
+        assertNotNull(session.getConfig());
+        assertEquals("1.0", session.getConfig().getVersion());
 
         session.close();
     }

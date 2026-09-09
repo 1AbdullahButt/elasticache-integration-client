@@ -1,7 +1,7 @@
 package software.amazon.photon.session;
 
 import software.amazon.photon.auth.AuthCredentials;
-import software.amazon.photon.connection.PhotonConnection;
+import software.amazon.photon.connection.PhotonConnector;
 import software.amazon.photon.connection.PhotonRequestCancellation;
 import software.amazon.photon.exception.PhotonError;
 import software.amazon.photon.model.PhotonRequest;
@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * Owns a PhotonConnection and manages its lifecycle.
+ * Owns a PhotonConnector and manages its lifecycle.
  *
  * <p>A session orchestrates connection bring-up (transport connect → AUTH →
  * the mandatory {@code photon.config} handshake) and exposes a synchronous
@@ -29,7 +29,7 @@ import java.util.function.Supplier;
  *
  * <p>Usage:
  * <pre>{@code
- * PhotonSession session = new PhotonSession(connection, authProvider, configOverrides);
+ * PhotonSession session = new PhotonSession(connector, authProvider, overrides);
  * session.open();
  * try {
  *     PhotonResponse response = session.request(photonRequest);
@@ -52,60 +52,60 @@ public class PhotonSession implements Closeable {
         CLOSED
     }
 
-    private final PhotonConnection connection;
+    private final PhotonConnector connector;
     private final Supplier<AuthCredentials> authProvider;
-    private final Map<String, Object> configOverrides;
+    private final Map<String, Object> overrides;
 
     private volatile State state = State.CREATED;
-    private ResolvedConfig resolvedConfig;
+    private ResolvedConfig config;
     private PredicateEvaluator predicateEvaluator;
 
     /**
      * Create a session with the given connection and auth provider.
      *
-     * @param connection      the underlying connection (not yet connected)
+     * @param connector       the underlying connector (not yet connected)
      * @param authProvider    supplies the AUTH credentials (userId + token)
-     * @param configOverrides optional config overrides (may be null)
+     * @param overrides optional config overrides (may be null)
      */
-    public PhotonSession(PhotonConnection connection, Supplier<AuthCredentials> authProvider,
-                         Map<String, Object> configOverrides) {
-        this.connection = connection;
+    public PhotonSession(PhotonConnector connector, Supplier<AuthCredentials> authProvider,
+                         Map<String, Object> overrides) {
+        this.connector = connector;
         this.authProvider = authProvider;
-        this.configOverrides = configOverrides != null ? configOverrides : Collections.emptyMap();
+        this.overrides = overrides != null ? overrides : Collections.emptyMap();
     }
 
     /**
      * Create a session with the given connection and static auth credentials.
      *
-     * @param connection      the underlying connection (not yet connected)
+     * @param connector       the underlying connector (not yet connected)
      * @param userId          the user ID for AUTH
      * @param authToken       the AUTH token
-     * @param configOverrides optional config overrides (may be null)
+     * @param overrides optional config overrides (may be null)
      */
-    public PhotonSession(PhotonConnection connection, String userId, String authToken,
-                         Map<String, Object> configOverrides) {
-        this(connection, () -> new AuthCredentials(userId, authToken), configOverrides);
+    public PhotonSession(PhotonConnector connector, String userId, String authToken,
+                         Map<String, Object> overrides) {
+        this(connector, () -> new AuthCredentials(userId, authToken), overrides);
     }
 
     /**
      * Create a session with default config overrides.
      *
-     * @param connection   the underlying connection
+     * @param connector    the underlying connector
      * @param authProvider supplies the AUTH credentials
      */
-    public PhotonSession(PhotonConnection connection, Supplier<AuthCredentials> authProvider) {
-        this(connection, authProvider, null);
+    public PhotonSession(PhotonConnector connector, Supplier<AuthCredentials> authProvider) {
+        this(connector, authProvider, null);
     }
 
     /**
      * Create a session with default config overrides and static auth credentials.
      *
-     * @param connection the underlying connection
+     * @param connector  the underlying connector
      * @param userId     the user ID for AUTH
      * @param authToken  the AUTH token
      */
-    public PhotonSession(PhotonConnection connection, String userId, String authToken) {
-        this(connection, userId, authToken, null);
+    public PhotonSession(PhotonConnector connector, String userId, String authToken) {
+        this(connector, userId, authToken, null);
     }
 
     /**
@@ -120,8 +120,8 @@ public class PhotonSession implements Closeable {
      *
      * @return the resolved config, or null if not yet opened
      */
-    public ResolvedConfig getResolvedConfig() {
-        return resolvedConfig;
+    public ResolvedConfig getConfig() {
+        return config;
     }
 
     /**
@@ -134,12 +134,12 @@ public class PhotonSession implements Closeable {
             throw new PhotonError("open() called on a " + state.name().toLowerCase() + " session");
         }
 
-        connection.connect();
+        connector.connect();
         try {
             AuthCredentials creds = authProvider.get();
-            connection.authenticate(creds.getUserId(), creds.getToken());
-            resolvedConfig = connection.configureAndStartReader(configOverrides);
-            predicateEvaluator = PredicateEvaluator.compile(resolvedConfig.getRaw());
+            connector.authenticate(creds.getUserId(), creds.getToken());
+            config = connector.configureAndStartReader(overrides);
+            predicateEvaluator = PredicateEvaluator.compile(config.getRaw());
         } catch (Exception e) {
             // Close on failure to clean up partially-opened state
             try {
@@ -171,10 +171,10 @@ public class PhotonSession implements Closeable {
         if (state != State.OPEN) {
             throw new PhotonError("request() called on a " + state.name().toLowerCase() + " session");
         }
-        if (!predicateEvaluator.route(request)) {
+        if (!predicateEvaluator.shouldRouteToPhoton(request)) {
             return null;
         }
-        return connection.request(request, cancellation);
+        return connector.request(request, cancellation);
     }
 
     /**
@@ -186,7 +186,7 @@ public class PhotonSession implements Closeable {
             return;
         }
         state = State.CLOSED;
-        connection.close();
+        connector.close();
     }
 
     /**

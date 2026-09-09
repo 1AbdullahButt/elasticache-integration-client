@@ -634,4 +634,3 @@ class TestPhotonConnector:
             conn_ready.result(timeout=1)
         assert conn._io_loop_thread.loop is None
         assert conn._io_loop_thread.main_task is None
-
