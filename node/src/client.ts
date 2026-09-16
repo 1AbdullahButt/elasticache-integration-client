@@ -16,7 +16,7 @@ export interface PhotonClientOptions<TConfig extends object> {
   /** AWS SDK v3 client configuration. */
   clientConfig?: Omit<TConfig, "region">;
   /** Node-specific Photon transport configuration. */
-  connectorOptions?: Omit<PhotonConnectorOptions, "authProvider">;
+  connectorOptions?: PhotonConnectorOptions;
   /** Overrides sent by the photon.config handshake. */
   overrides?: Readonly<Record<string, unknown>>;
 }
@@ -25,7 +25,7 @@ interface InitializeOptions {
   cacheName: string;
   region?: string;
   userId?: string;
-  connectorOptions?: Omit<PhotonConnectorOptions, "authProvider">;
+  connectorOptions?: PhotonConnectorOptions;
   overrides: Readonly<Record<string, unknown>>;
 }
 
@@ -43,12 +43,17 @@ async function initialize<TClient extends PhotonCompatibleClient>(
   options: InitializeOptions,
 ): Promise<PhotonHandle> {
   const [host, port] = parseEndpoint(endpoint);
-  const authProvider = await buildCacheAuthProvider({
-    cacheName: options.cacheName,
-    ...(options.userId === undefined ? {} : { userId: options.userId }),
-    ...(options.region === undefined ? {} : { region: options.region }),
-    credentials: sdkClient.config.credentials,
-  });
+  // A caller-supplied provider replaces token generation rather than competing with it. The
+  // spread below would otherwise decide the winner by key order, and generating a token needs
+  // SDK credentials that a caller bringing its own token may not have at all.
+  const authProvider =
+    options.connectorOptions?.authProvider ??
+    (await buildCacheAuthProvider({
+      cacheName: options.cacheName,
+      ...(options.userId === undefined ? {} : { userId: options.userId }),
+      ...(options.region === undefined ? {} : { region: options.region }),
+      credentials: sdkClient.config.credentials,
+    }));
   const connector = new PhotonConnector(host, port, {
     ...options.connectorOptions,
     authProvider,

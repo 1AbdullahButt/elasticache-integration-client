@@ -76,6 +76,12 @@ Node.js AWS configuration. `clientConfig` and `connectorOptions` are
 Node-specific; all `photon.config` overrides are passed through the `overrides`
 option.
 
+AUTH normally presigns a short-lived IAM token from the SDK credential chain.
+A caller that already holds a token, or that authenticates against a local or
+test endpoint, supplies `connectorOptions.authProvider` instead: it returns
+`[userId, token]` and replaces token generation entirely, so no AWS credentials
+are required.
+
 Authentication, transport, protocol, and middleware implementation details are
 internal to the package. Overrides use standard JSON-compatible values;
 non-finite JavaScript numbers are rejected instead of being silently converted
