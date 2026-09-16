@@ -29,7 +29,8 @@ from photon.exceptions import (
     PhotonProtocolError,
     PhotonTimeoutError,
 )
-from photon.resp import RespError, RespValue
+from photon.protocol import PUSH_KIND_RESPONSE
+from photon.resp import RespError, RespPush, RespValue
 from tests.mock import MockCache, Reply
 
 
@@ -74,6 +75,13 @@ class TestPhotonConnector:
         """Send a canonical photon.request ([method, url, headers, body, metadata]) with the given."""
         args = [b"POST", b"https://x/", b"", body, b"service=s&op=o"]
         return self.conn.execute("photon.request", *args)
+
+    def wait_until(self, condition, timeout: float = 2.0) -> bool:
+        """Poll ``condition`` until it is true, up to ``timeout``. Returns its final value."""
+        deadline = time.monotonic() + timeout
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return condition()
 
     def wrap_writer(self) -> mock.Mock:
         """Replace the connector's stream writer with a delegating mock and return it.
@@ -208,7 +216,7 @@ class TestPhotonConnector:
         )
         with pytest.raises(PhotonConnectionError, match="AUTH timed out"):
             self.conn.authenticate()
-        assert self.conn._closed is True
+        assert self.conn._closed
 
     def test_auth_accepted(self):
         """The RESP +OK reply (decoded to "OK") is accepted.
@@ -450,20 +458,35 @@ class TestPhotonConnector:
         pending.resolve_oldest_request(b"v1")   # frees one slot
         pending.register_new_request(Future())  # fits again
 
-    def test_pending_requests_move_and_resolve_async(self):
-        """move_head_to_async_responses moves the OLDEST future out of the FIFO under the id;
-        resolve_async resolves it; the FIFO order of the remaining futures is untouched.
-        Internals: _PendingRequests."""
+    def test_max_pending_counts_deferred_requests(self):
+        """A deferred request still counts against max_pending."""
+        pending = _PendingRequests(max_pending=1)
+        pending.register_new_request(Future())
+        pending.move_head_to_async_responses("1")   # out of the FIFO, still in flight
+        with pytest.raises(PhotonError, match="too many in-flight requests"):
+            pending.register_new_request(Future())
+
+    def test_a_deferred_request_lets_the_next_reply_through(self):
+        """The reply after a deferral goes to the request behind it; the deferred one keeps
+        waiting. Internals: _PendingRequests."""
         pending = _PendingRequests()
-        f1, f2 = Future(), Future()
-        pending.register_new_request(f1)
-        pending.register_new_request(f2)
-        pending.move_head_to_async_responses("1")   # moves f1
-        pending.resolve_oldest_request(b"v2")           # f2 is now the oldest
-        assert f2.result(timeout=1) == b"v2"
-        assert not f1.done()
-        assert pending.resolve_async("1", b"v1")
-        assert f1.result(timeout=1) == b"v1"
+        deferred, behind_it = Future(), Future()
+        pending.register_new_request(deferred)
+        pending.register_new_request(behind_it)
+        pending.move_head_to_async_responses("1")
+        pending.resolve_oldest_request(b"reply")
+        assert behind_it.result(timeout=1) == b"reply"
+        assert not deferred.done()
+
+    def test_pending_requests_move_and_resolve_async(self):
+        """move_head_to_async_responses moves the oldest future out of the FIFO under the id;
+        resolve_async resolves it. Internals: _PendingRequests."""
+        pending = _PendingRequests()
+        future = Future()
+        pending.register_new_request(future)
+        pending.move_head_to_async_responses("1")
+        assert pending.resolve_async("1", b"reply")
+        assert future.result(timeout=1) == b"reply"
 
     def test_resolve_async_unknown_id(self):
         """resolve_async reports an id nobody waits for, so a push that lost its caller is
@@ -543,7 +566,82 @@ class TestPhotonConnector:
         assert conn._pending._max_pending == 7
 
     # ======================================================================== #
-    # 5. Close — teardown
+    # 5. Deferred (out-of-band) responses — HOL blocking removal
+    # ======================================================================== #
+
+    def test_reader_routes_an_id_reply_to_the_async_map(self):
+        """A simple string other than OK is a request id: the reader moves the oldest future
+        out of the FIFO into the async map under that id. Internals: _reader_loop."""
+        conn = PhotonConnector("host", 6379, tls=False)
+        future = Future()
+        conn._pending.register_new_request(future)
+
+        async def read_frame() -> RespValue:
+            conn._closed = True
+            return "42"
+
+        conn._reader = mock.Mock(read_frame=read_frame)
+        asyncio.run(conn._reader_loop())
+        assert conn._pending._async_responses["42"] is future
+        assert future not in conn._pending._queue
+
+    @pytest.mark.parametrize(
+        "reply",
+        [[200, b"", b"body"], RespError("ERR", "origin failed")],
+        ids=["response", "error"],
+    )
+    def test_push_consumes_its_id_entry(self, reply):
+        """The push for a deferred request resolves its future and removes the id from the
+        map, so nothing is left waiting under it. An error travels as a value, like a
+        synchronous one. Internals: _handle_push."""
+        conn = PhotonConnector("host", 6379, tls=False)
+        future = Future()
+        conn._pending.register_new_request(future)
+        conn._pending.move_head_to_async_responses("42")
+        conn._handle_push(RespPush(kind=PUSH_KIND_RESPONSE, items=[b"42", reply]))
+        assert future.result(timeout=1) == reply
+        assert "42" not in conn._pending._async_responses
+
+    def test_async_request_timeout_keeps_connection_alive(self):
+        """A timeout on a deferred request abandons only that request: the connection
+        survives, the late push is dropped with a warning, and the next request works."""
+        replies = [Reply.request_id(1), Reply.ok(body=b"after")]
+        self.start_cache(response_fn=lambda req: replies.pop(0))
+        self.connect_and_handshake(request_timeout=0.3)
+
+        with pytest.raises(PhotonTimeoutError, match="async request timed out"):
+            self.send_request()
+        assert not self.conn._closed           # the connection survived
+
+        self.cache.send_push(1)                   # late push: unknown id, dropped
+        value = self.send_request()               # connection still fully usable
+        assert value[2] == b"after"
+        assert not self.conn._closed
+
+    def test_unknown_push_kind_is_a_protocol_error(self):
+        """The proxy only sends kinds this client understands, so an unknown kind means the
+        stream cannot be trusted. Internals: _handle_push."""
+        conn = PhotonConnector("host", 6379, tls=False)
+        with pytest.raises(PhotonProtocolError, match="unknown push kind"):
+            conn._handle_push(RespPush(kind=b"invalidate", items=[b"whatever"]))
+
+    def test_malformed_push_kills_connection(self):
+        """A push the protocol layer cannot read leaves the whole stream untrustworthy, so the
+        reader marks the connection dead. Payload rules live in parse_response_push."""
+        self.start_cache()
+        self.connect_and_handshake()
+        self.cache.send_push(1, items=[Reply.ok().frame])  # a reply, one item
+        assert self.wait_until(lambda: self.conn._closed)
+
+    def test_push_for_unknown_id_is_dropped(self):
+        """A push whose id maps to nothing (caller timed out earlier) is logged and dropped;
+        the connection stays alive. Internals: _handle_push."""
+        conn = PhotonConnector("host", 6379, tls=False)
+        conn._handle_push(RespPush(kind=PUSH_KIND_RESPONSE, items=[b"7", [200, b"", b""]]))
+        assert not conn._closed
+
+    # ======================================================================== #
+    # 6. Close — teardown
     # ======================================================================== #
 
     def test_close_twice_is_safe(self):
