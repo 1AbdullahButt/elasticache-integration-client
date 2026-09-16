@@ -211,10 +211,10 @@ class TestPhotonConnector:
         assert self.conn._closed is True
 
     def test_auth_accepted(self):
-        """The RESP +OK reply (decoded to b"OK") is accepted.
+        """The RESP +OK reply (decoded to "OK") is accepted.
         Internals: _verify_auth_reply is pure reply validation, tested directly."""
         conn = PhotonConnector("host", 6379, tls=False)
-        conn._verify_auth_reply(b"OK")  # must not raise
+        conn._verify_auth_reply("OK")  # must not raise
         assert conn._closed is False
 
     def test_auth_rejected_kills_connection(self):
@@ -394,7 +394,7 @@ class TestPhotonConnector:
             stream.feed_data(b"lo\r\n+OK\r\n")       # rest of it + a whole second frame
             return [await reader.read_frame(), await reader.read_frame()]
 
-        assert asyncio.run(scenario()) == [b"hello", b"OK"]
+        assert asyncio.run(scenario()) == [b"hello", "OK"]
 
     def test_garbage_reply_fails_caller_as_connection_lost(self):
         """A reply that cannot be decoded kills the connection: the waiting caller fails
