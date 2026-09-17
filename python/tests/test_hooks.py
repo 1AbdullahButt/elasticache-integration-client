@@ -7,6 +7,7 @@ from botocore.hooks import first_non_none_response
 
 from photon import hooks
 from photon.exceptions import (
+    PhotonCacheUnavailable,
     PhotonConnectionError,
     PhotonConnectionLost,
     PhotonError,
@@ -147,4 +148,19 @@ def test_non_photon_error_propagates():
     session.request.side_effect = RuntimeError("bug")
     hooks.PhotonHandle(sdk, session)
     with pytest.raises(RuntimeError):
+        _emit(sdk)
+
+
+@pytest.mark.parametrize("caught_as", [
+    PhotonCacheUnavailable,  # reaches the application instead of being passed through
+    ConnectionClosedError,   # under the botocore name an application already handles
+])
+def test_cache_unavailable_reaches_the_application(caught_as):
+    """An escalated cache-unavailable error propagates, under either of its names."""
+    sdk = MockClient()
+    session = mock_session()
+    session.request.side_effect = PhotonCacheUnavailable(endpoint_url="https://host/")
+    hooks.PhotonHandle(sdk, session)
+
+    with pytest.raises(caught_as):
         _emit(sdk)
