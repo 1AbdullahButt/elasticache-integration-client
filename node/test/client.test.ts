@@ -153,6 +153,24 @@ describe("client", () => {
     expect(mocks.sessionConstructor).toHaveBeenCalledWith(expect.anything(), {});
   });
 
+  it("uses a supplied authProvider instead of generating a token", async () => {
+    setup();
+    const authProvider = () => ["injected-user", "injected-token"] as [string, string];
+
+    await client("dynamodb", FakeClient, {
+      endpoint: options.endpoint,
+      cacheName: options.cacheName,
+      clientConfig: { credentials },
+      connectorOptions: { tls: false, authProvider },
+    });
+
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.connection).toHaveBeenCalledWith("cache.example.com", 6379, {
+      tls: false,
+      authProvider,
+    });
+  });
+
   it.each(["auth", "open", "install"])(
     "cleans up owned resources when %s initialization fails",
     async (failure) => {
