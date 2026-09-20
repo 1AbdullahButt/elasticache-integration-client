@@ -88,6 +88,16 @@ test endpoint, supplies `connectorOptions.authProvider` instead: it returns
 `[userId, token]` and replaces token generation entirely, so no AWS credentials
 are required.
 
+TLS is on by default and the server's certificate is verified against Node.js's
+default CA store — its bundled Mozilla roots, plus the OS trust store only when
+Node is run with system-CA support enabled — or against
+`connectorOptions.caCerts` when supplied. A local or test endpoint whose
+certificate cannot be verified is reached with
+`connectorOptions.insecureSkipVerify`, which keeps TLS but waives the identity
+check and emits a process warning on the first handshake that uses it. It is not
+a production option; supply `caCerts` instead wherever the endpoint's CA is
+available.
+
 Authentication, transport, protocol, and middleware implementation details are
 internal to the package. Overrides use standard JSON-compatible values;
 non-finite JavaScript numbers are rejected instead of being silently converted
