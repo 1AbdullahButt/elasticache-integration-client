@@ -7,6 +7,10 @@ cacheable, and the request path.
 
 While no connection is available, requests are declined so the caller sends them to the origin
 service itself — for as long as the fallback window allows.
+
+A :class:`~photon.refresh.ConfigRefresher` runs for as long as the session is open, so the config
+can be re-resolved on the live connection rather than only when a new one is built. Here it is
+lifecycle only: ``_refresh_once`` is a no-op, so nothing is fetched or applied yet.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from photon.protocol import (
     serialize_config,
     serialize_request,
 )
+from photon.refresh import ConfigRefresher
 
 
 def parse_endpoint(endpoint: str) -> tuple[str, int]:
@@ -73,14 +78,23 @@ class PhotonSession:
             PhotonError: The connection could not be opened; see
                 :meth:`ConnectionManager.init_connection`.
                 Creating a session fails loudly rather than handing back one that never caches.
+            RuntimeError: The refresher thread could not be started. The connection is closed
+                first, so a session that cannot refresh never leaves one open behind it.
         """
         self._overrides = overrides or {}
         self._config = None
         self._predicates = None
+        self._refresher: ConfigRefresher | None = None
         self._connection_manager = ConnectionManager(
             connector_factory, self._configure, policy or ReconnectPolicy()
         )
         self._connection_manager.init_connection()
+        try:
+            self._refresher = ConfigRefresher(self._config.refresh_interval, self._refresh_once)
+            self._refresher.start()
+        except BaseException:
+            self.close()
+            raise
 
     @property
     def state(self) -> ConnectionState:
@@ -107,6 +121,9 @@ class PhotonSession:
         # Compile the resolved predicates once; the request path evaluates them per request.
         predicates = compile_predicates(config.raw)
         self._config, self._predicates = config, predicates
+
+    def _refresh_once(self) -> None:
+        """Placeholder. Fetching, parsing, and swapping in a new config is not yet implemented."""
 
     def request(self, request: PhotonRequest) -> PhotonResponse | None:
         """Route a request to Photon, or return None to let the caller handle it.
@@ -138,5 +155,10 @@ class PhotonSession:
         return parse_request_response(connector.execute(command, *args))
 
     def close(self) -> None:
-        """Close the session's connection and stop all reconnect activity. Idempotent."""
+        """Stop the refresher, then close the session's connection and all reconnect activity.
+
+        Idempotent.
+        """
+        if self._refresher:
+            self._refresher.stop()
         self._connection_manager.close()
