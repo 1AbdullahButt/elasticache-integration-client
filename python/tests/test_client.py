@@ -6,12 +6,16 @@ boto3 client must be closed rather than leaked. boto3 and the auth provider are
 faked so no network or credentials are needed.
 """
 
+import importlib
 from unittest.mock import MagicMock
 
 import pytest
 
-import photon.client as client_mod
 from photon.exceptions import PhotonError
+
+# photon/__init__.py re-exports a `client` function, shadowing the `photon.client`
+# submodule attribute — so load the module object explicitly to patch its globals.
+client_mod = importlib.import_module("photon.client")
 
 
 def _patch_common(monkeypatch, sdk_client):
