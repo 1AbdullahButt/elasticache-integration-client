@@ -841,6 +841,20 @@ describe("PhotonConnector", () => {
     await connector.close();
   });
 
+  it("notifies its owner exactly once when closed", async () => {
+    const cache = await startCache();
+    const connector = new PhotonConnector(cache.host, cache.port!, { tls: false });
+    const onDisconnect = vi.fn();
+    connector.onDisconnect = onDisconnect;
+    await connector.connect();
+
+    connector.destroy();
+    await connector.close();
+    connector.destroy();
+
+    expect(onDisconnect).toHaveBeenCalledOnce();
+  });
+
   it("keeps close awaitable after destroy until the reader settles", async () => {
     const connector = new PhotonConnector("127.0.0.1", 1, { tls: false });
     let settleReader!: () => void;

@@ -1,8 +1,8 @@
 import { buildCacheAuthProvider } from "./auth.js";
 import { PhotonConnector, type PhotonConnectorOptions } from "./connection.js";
-import { PhotonError } from "./errors.js";
+import { PhotonConfigError, PhotonError } from "./errors.js";
 import { PhotonHandle, type PhotonCompatibleClient } from "./middleware.js";
-import { parseEndpoint, PhotonSession } from "./session.js";
+import { parseEndpoint, PhotonSession, type ReconnectPolicyOptions } from "./session.js";
 
 export interface PhotonClientOptions<TConfig extends object> {
   /** Cache endpoint as host:port. */
@@ -17,6 +17,13 @@ export interface PhotonClientOptions<TConfig extends object> {
   clientConfig?: Omit<TConfig, "region">;
   /** Node-specific Photon transport configuration. */
   connectorOptions?: PhotonConnectorOptions;
+  /**
+   * Seconds that disconnected requests may fall back to origin per outage.
+   * `null`, `undefined`, or a negative value means indefinitely; zero disables fallback.
+   */
+  fallbackDuration?: number | null;
+  /** Advanced reconnection and fallback configuration. */
+  reconnectPolicy?: ReconnectPolicyOptions;
   /** Overrides sent by the photon.config handshake. */
   overrides?: Readonly<Record<string, unknown>>;
 }
@@ -26,6 +33,8 @@ interface InitializeOptions {
   region?: string;
   userId?: string;
   connectorOptions?: PhotonConnectorOptions;
+  fallbackDuration?: number | null;
+  reconnectPolicy?: ReconnectPolicyOptions;
   overrides: Readonly<Record<string, unknown>>;
 }
 
@@ -43,9 +52,7 @@ async function initialize<TClient extends PhotonCompatibleClient>(
   options: InitializeOptions,
 ): Promise<PhotonHandle> {
   const [host, port] = parseEndpoint(endpoint);
-  // A caller-supplied provider replaces token generation rather than competing with it. The
-  // spread below would otherwise decide the winner by key order, and generating a token needs
-  // SDK credentials that a caller bringing its own token may not have at all.
+  // A caller-supplied provider replaces token generation rather than competing with it.
   const authProvider =
     options.connectorOptions?.authProvider ??
     (await buildCacheAuthProvider({
@@ -54,11 +61,18 @@ async function initialize<TClient extends PhotonCompatibleClient>(
       ...(options.region === undefined ? {} : { region: options.region }),
       credentials: sdkClient.config.credentials,
     }));
-  const connector = new PhotonConnector(host, port, {
-    ...options.connectorOptions,
-    authProvider,
-  });
-  const session = new PhotonSession(connector, options.overrides);
+  const connectorFactory = () =>
+    new PhotonConnector(host, port, {
+      ...options.connectorOptions,
+      authProvider,
+    });
+  const reconnectPolicy = {
+    ...options.reconnectPolicy,
+    ...(options.fallbackDuration === undefined
+      ? {}
+      : { fallbackDurationMs: fallbackDurationMs(options.fallbackDuration) }),
+  };
+  const session = new PhotonSession(connectorFactory, options.overrides, reconnectPolicy);
   try {
     await session.open();
     const handle = new PhotonHandle(sdkClient, session, service);
@@ -71,6 +85,17 @@ async function initialize<TClient extends PhotonCompatibleClient>(
     }
     throw error;
   }
+}
+
+function fallbackDurationMs(value: number | null): number | null {
+  if (value === null) return value;
+  const milliseconds = value * 1_000;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds % 1_000 !== 0) {
+    throw new PhotonConfigError(
+      "fallbackDuration must be a whole number of seconds, null, or undefined",
+    );
+  }
+  return milliseconds;
 }
 
 /**
@@ -95,6 +120,8 @@ export async function client<TConfig extends object, TClient extends PhotonCompa
     userId,
     clientConfig,
     connectorOptions,
+    fallbackDuration,
+    reconnectPolicy,
     overrides = {},
   } = options;
   const sdkClient = new ClientCtor({
@@ -108,6 +135,8 @@ export async function client<TConfig extends object, TClient extends PhotonCompa
       ...(region === undefined ? {} : { region }),
       ...(userId === undefined ? {} : { userId }),
       ...(connectorOptions === undefined ? {} : { connectorOptions }),
+      ...(fallbackDuration === undefined ? {} : { fallbackDuration }),
+      ...(reconnectPolicy === undefined ? {} : { reconnectPolicy }),
       overrides,
     });
   } catch (error) {

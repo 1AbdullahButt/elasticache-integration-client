@@ -306,12 +306,17 @@ export class PhotonConnector {
   private readonly authProvider: PhotonConnectorOptions["authProvider"];
 
   private socket: ConnectedSocket | undefined;
+  private openingSocket: ConnectedSocket | undefined;
   // Kept while the reader is active so close() can still await it after destroy().
   private readerTask: Promise<void> | undefined;
   private readonly pending: PendingRequests;
   private connecting = false;
   private dead = false;
   private closed = false;
+  private disconnectNotified = false;
+
+  /** Called once when this connector ends, including deliberate close. */
+  onDisconnect: (() => void) | undefined;
 
   constructor(host: string, port: number, options: PhotonConnectorOptions = {}) {
     this.host = host;
@@ -347,8 +352,10 @@ export class PhotonConnector {
     let socket: ConnectedSocket | undefined;
     try {
       socket = await this.openTcp();
+      this.openingSocket = socket;
       if (this.useTls) {
         socket = await this.openTls(socket);
+        this.openingSocket = socket;
       }
       socket.setNoDelay(true);
       socket.setTimeout(0);
@@ -357,6 +364,7 @@ export class PhotonConnector {
         throw new PhotonConnectionError("PhotonConnector closed during connect()");
       }
       this.socket = socket;
+      this.openingSocket = undefined;
       this.dead = false;
       const reader = new SocketReader(socket, this.readSize, this.maxResponseSize);
       const readerTask = this.readerLoop(reader);
@@ -374,6 +382,7 @@ export class PhotonConnector {
         cause: error,
       });
     } finally {
+      this.openingSocket = undefined;
       this.connecting = false;
     }
   }
@@ -415,9 +424,12 @@ export class PhotonConnector {
     this.pending.failAll(new PhotonConnectionLost("connection closed"));
     const socket = this.socket;
     try {
+      this.openingSocket?.destroy();
       socket?.destroy();
     } finally {
+      this.openingSocket = undefined;
       this.socket = undefined;
+      this.notifyDisconnect();
     }
   }
 
@@ -470,6 +482,16 @@ export class PhotonConnector {
       }
       throw error;
     }
+  }
+
+  /** Whether this connector has failed or been closed and must be replaced. */
+  get isDead(): boolean {
+    return this.dead || this.closed;
+  }
+
+  /** Whether this connector currently has a usable socket. */
+  get isReady(): boolean {
+    return this.socket !== undefined && !this.dead && !this.closed;
   }
 
   private send(command: string, ...args: Buffer[]): SentRequest {
@@ -589,6 +611,7 @@ export class PhotonConnector {
   private async openTcp(): Promise<Socket> {
     return new Promise<Socket>((resolve, reject) => {
       const socket = connectTcp({ host: this.host, port: this.port });
+      this.openingSocket = socket;
       let settled = false;
       const timer = setTimeout(() => {
         const error = new PhotonConnectionError(
@@ -604,6 +627,7 @@ export class PhotonConnector {
         clearTimeout(timer);
         socket.removeListener("connect", onConnect);
         socket.removeListener("error", onError);
+        socket.removeListener("close", onClose);
         socket.removeListener("timeout", onTimeout);
         if (value instanceof Error) reject(value);
         else resolve(value);
@@ -617,6 +641,15 @@ export class PhotonConnector {
         socket.destroy();
         finish(wrapped);
       };
+      const onClose = () => {
+        finish(
+          new PhotonConnectionError(
+            this.closed
+              ? "PhotonConnector closed during connect()"
+              : `Connection closed while connecting to ${this.host}:${this.port}`,
+          ),
+        );
+      };
       const onTimeout = () => {
         const error = new PhotonConnectionError(
           `Timed out connecting to ${this.host}:${this.port}`,
@@ -627,6 +660,7 @@ export class PhotonConnector {
 
       socket.once("connect", onConnect);
       socket.once("error", onError);
+      socket.once("close", onClose);
       socket.once("timeout", onTimeout);
     });
   }
@@ -643,6 +677,7 @@ export class PhotonConnector {
       if (this.insecureSkipVerify) warnInsecureSkipVerify();
 
       const secured = connectTls(options);
+      this.openingSocket = secured;
       let settled = false;
       const timer = setTimeout(() => {
         const error = new PhotonConnectionError(
@@ -658,6 +693,7 @@ export class PhotonConnector {
         clearTimeout(timer);
         secured.removeListener("secureConnect", onSecureConnect);
         secured.removeListener("error", onError);
+        secured.removeListener("close", onClose);
         if (value instanceof Error) reject(value);
         else resolve(value);
       };
@@ -670,9 +706,19 @@ export class PhotonConnector {
         secured.destroy();
         finish(wrapped);
       };
+      const onClose = () => {
+        finish(
+          new PhotonConnectionError(
+            this.closed
+              ? "PhotonConnector closed during connect()"
+              : `TLS connection closed during handshake to ${this.host}:${this.port}`,
+          ),
+        );
+      };
 
       secured.once("secureConnect", onSecureConnect);
       secured.once("error", onError);
+      secured.once("close", onClose);
     });
   }
 
@@ -756,6 +802,17 @@ export class PhotonConnector {
     this.dead = true;
     this.pending.failAll(error);
     this.socket?.destroy();
+    this.notifyDisconnect();
+  }
+
+  private notifyDisconnect(): void {
+    if (this.disconnectNotified) return;
+    this.disconnectNotified = true;
+    try {
+      this.onDisconnect?.();
+    } catch {
+      // Owner notification must not escape the socket reader or teardown path.
+    }
   }
 
   private verifyAuthReply(reply: RespValue): void {
