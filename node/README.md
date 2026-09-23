@@ -124,11 +124,12 @@ Reconnect delay doubles to `maxDelayMs`, with symmetric jitter applied to every
 attempt including the capped tail. Closing or destroying the SDK client
 interrupts reconnect backoff and prevents further attempts.
 
-AUTH normally presigns a short-lived IAM token from the SDK credential chain.
-A caller that already holds a token, or that authenticates against a local or
-test endpoint, supplies `connectorOptions.authProvider` instead: it returns
-`[userId, token]` and replaces token generation entirely, so no AWS credentials
-are required.
+AUTH normally uses `@aws/developer-toolkit-elasticache` to presign a short-lived
+IAM token from the SDK credential chain. The toolkit validates cache names and
+user IDs and normalizes them to lowercase before signing. A caller that already
+holds a token, or that authenticates against a local or test endpoint, supplies
+`connectorOptions.authProvider` instead: it returns `[userId, token]` and
+replaces token generation entirely, so no AWS credentials are required.
 
 TLS is on by default and the server's certificate is verified against Node.js's
 default CA store — its bundled Mozilla roots, plus the OS trust store only when
@@ -151,6 +152,10 @@ to `null`.
 npm install
 npm run verify
 ```
+
+Until the ElastiCache toolkit is published to npm, it is pinned as a Git
+submodule. Initialize it after cloning with
+`git submodule update --init --recursive`.
 
 The package builds ESM and CommonJS outputs, emits TypeScript declarations, and
 does not publish as part of this prototype.
