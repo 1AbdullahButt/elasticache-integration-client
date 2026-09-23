@@ -19,8 +19,11 @@ import software.amazon.photon.model.ResolvedConfig;
 
 import javax.net.ssl.SSLContext;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -120,6 +123,205 @@ class PhotonSessionTest {
         assertTrue(error.getMessage().contains("closed"));
     }
 
+    // === Refresher lifecycle tests ===
+
+    /**
+     * Captures the refresher a session builds so a test can inspect its thread. The session's
+     * package-private createRefresher() seam avoids adding any public constructor or getter.
+     */
+    private static class RefresherCapturingSession extends PhotonSession {
+        private final List<String> teardownOrder;
+        private ConfigRefresher captured;
+
+        RefresherCapturingSession(PhotonConnector connector, List<String> teardownOrder) {
+            super(connector, TEST_USER, TEST_TOKEN);
+            this.teardownOrder = teardownOrder;
+        }
+
+        @Override
+        ConfigRefresher createRefresher(double intervalSeconds, Runnable refreshOnce) {
+            captured = new ConfigRefresher(intervalSeconds, refreshOnce) {
+                @Override
+                void stop(long timeoutMillis) {
+                    if (teardownOrder != null) {
+                        teardownOrder.add("refresher.stop");
+                    }
+                    super.stop(timeoutMillis);
+                }
+            };
+            return captured;
+        }
+    }
+
+    @Test
+    void open_startsRefresherThread() {
+        RefresherCapturingSession session = new RefresherCapturingSession(createConnection(), null);
+        assertNull(session.captured);
+
+        session.open();
+        try {
+            assertNotNull(session.captured);
+            assertNotNull(session.captured.thread());
+            assertTrue(session.captured.thread().isAlive());
+            assertEquals("photon-refresher", session.captured.thread().getName());
+            assertTrue(session.captured.thread().isDaemon());
+        } finally {
+            session.close();
+        }
+    }
+
+    @Test
+    void close_stopsRefresherThread() {
+        RefresherCapturingSession session = new RefresherCapturingSession(createConnection(), null);
+        session.open();
+        Thread refresherThread = session.captured.thread();
+        assertTrue(refresherThread.isAlive());
+
+        session.close();
+
+        assertFalse(refresherThread.isAlive());
+    }
+
+    @Test
+    void close_stopsRefresherBeforeClosingConnector() {
+        // A refresh must never fire into a half-closed connection during an orderly shutdown.
+        List<String> order = new ArrayList<>();
+        PhotonConnector connector = new PhotonConnector("localhost", server.getPort(), clientSslContext) {
+            @Override
+            public void close() {
+                order.add("connector.close");
+                super.close();
+            }
+        };
+
+        RefresherCapturingSession session = new RefresherCapturingSession(connector, order);
+        session.open();
+        session.close();
+
+        assertEquals(Arrays.asList("refresher.stop", "connector.close"), order);
+    }
+
+    @Test
+    void refresherConstructionFailure_isTerminalAndCleansUpConnector() {
+        List<PhotonConnector> created = new ArrayList<>();
+        Supplier<PhotonConnector> connectorFactory = () -> {
+            PhotonConnector connector = createConnection();
+            created.add(connector);
+            return connector;
+        };
+        PhotonSession session = new PhotonSession(connectorFactory,
+                () -> new AuthCredentials(TEST_USER, TEST_TOKEN), null, fastPolicy()) {
+            @Override
+            ConfigRefresher createRefresher(double intervalSeconds, Runnable refreshOnce) {
+                throw new IllegalStateException("refresher construction failed");
+            }
+        };
+
+        assertThrows(IllegalStateException.class, session::open);
+        assertEquals(PhotonSession.State.CLOSED, session.getState());
+        assertEquals(1, created.size(),
+                "refresher construction failure must not retry the connect handshake");
+        assertFalse(created.get(0).isReady(), "connector remained open after refresher failure");
+        assertFalse(refresherThreadExists(), "a photon-refresher thread leaked from a failed open()");
+    }
+
+    @Test
+    void refresherStartFailure_isTerminalAndCleansUpConnector() {
+        List<PhotonConnector> created = new ArrayList<>();
+        Supplier<PhotonConnector> connectorFactory = () -> {
+            PhotonConnector connector = createConnection();
+            created.add(connector);
+            return connector;
+        };
+        PhotonSession session = new PhotonSession(connectorFactory,
+                () -> new AuthCredentials(TEST_USER, TEST_TOKEN), null, fastPolicy()) {
+            @Override
+            ConfigRefresher createRefresher(double intervalSeconds, Runnable refreshOnce) {
+                return new ConfigRefresher(intervalSeconds, refreshOnce) {
+                    @Override
+                    void start() {
+                        throw new RuntimeException("refresher start failed");
+                    }
+                };
+            }
+        };
+
+        assertThrows(RuntimeException.class, session::open);
+        assertEquals(PhotonSession.State.CLOSED, session.getState());
+        assertEquals(1, created.size(),
+                "refresher start failure must not retry the connect handshake");
+        assertFalse(created.get(0).isReady(), "connector remained open after refresher failure");
+        assertFalse(refresherThreadExists(), "a photon-refresher thread leaked from a failed open()");
+    }
+
+    @Test
+    void close_duringConcurrentOpen_doesNotLeakRefresherThread() throws Exception {
+        // Credential resolution is application code and may block indefinitely. close() must still
+        // win the lifecycle, close the connector, and prevent open() from starting a refresher.
+        CountDownLatch authProviderEntered = new CountDownLatch(1);
+        CountDownLatch releaseAuthProvider = new CountDownLatch(1);
+        PhotonSession blockingSession = new PhotonSession(createConnection(), () -> {
+            authProviderEntered.countDown();
+            try {
+                releaseAuthProvider.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new AuthCredentials(TEST_USER, TEST_TOKEN);
+        });
+
+        // Daemon so a reintroduced deadlock hangs neither the JVM shutdown nor the test runner;
+        // capture uncaught exceptions so a thread dying silently can't produce a false pass.
+        List<Throwable> openerFailure = new ArrayList<>();
+        List<Throwable> closerFailure = new ArrayList<>();
+        Thread opener = new Thread(blockingSession::open);
+        opener.setDaemon(true);
+        opener.setUncaughtExceptionHandler((t, e) -> openerFailure.add(e));
+        Thread closer = new Thread(blockingSession::close);
+        closer.setDaemon(true);
+        closer.setUncaughtExceptionHandler((t, e) -> closerFailure.add(e));
+
+        opener.start();
+        try {
+            assertTrue(authProviderEntered.await(5, TimeUnit.SECONDS));
+
+            closer.start();
+            closer.join(5000);
+            assertFalse(closer.isAlive(), "close() blocked behind an in-flight open()");
+            assertTrue(closerFailure.isEmpty(), "close() threw unexpectedly: " + closerFailure);
+            assertEquals(PhotonSession.State.CLOSED, blockingSession.getState());
+        } finally {
+            if (closer.getState() == Thread.State.NEW) {
+                closer.start();
+            }
+            releaseAuthProvider.countDown();
+            opener.join(5000);
+            closer.join(5000);
+        }
+
+        // A timeout above leaves the thread alive (join() with a timeout does not fail by itself),
+        // so assert completion explicitly rather than letting a hung thread slide into the state
+        // assertions below and produce a false pass.
+        assertFalse(opener.isAlive(), "open() did not complete within timeout; likely deadlocked");
+        assertEquals(1, openerFailure.size(), "open() should fail after close() wins the lifecycle");
+
+        assertEquals(PhotonSession.State.CLOSED, blockingSession.getState());
+        assertFalse(refresherThreadExists(), "a photon-refresher thread leaked from a close() racing open()");
+    }
+
+    /** True if any live thread is named "photon-refresher". */
+    private static boolean refresherThreadExists() {
+        Thread[] threads = new Thread[Thread.activeCount() * 2];
+        int found = Thread.enumerate(threads);
+        for (int i = 0; i < found; i++) {
+            if (threads[i] != null && "photon-refresher".equals(threads[i].getName())
+                    && threads[i].isAlive()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // === Request tests ===
 
     @Test
@@ -170,7 +372,7 @@ class PhotonSessionTest {
 
     @Test
     void celAllowlist_routesOnlyAllowlistedTable() {
-        cache.setConfigJson("{\"version\":\"1.0\",\"predicates\":[{"
+        cache.setConfigJson("{\"version\":\"1.0\",\"refresh_interval\":60,\"predicates\":[{"
                 + "\"expr\":\"service == 'dynamodb' && operation in ops "
                 + "&& has(body.TableName) && body.TableName in allowed\","
                 + "\"vars\":{\"ops\":[\"GetItem\",\"PutItem\"],"

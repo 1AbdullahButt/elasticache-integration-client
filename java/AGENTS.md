@@ -131,6 +131,14 @@ mistake this contract for a review finding; intentional scope changes require
 README, tests, and an explicit contract decision. Normal AWS SDK
 retry/deserialization behavior remains in scope.
 
+Periodic config refresh is partially in scope: `ConfigRefresher` and its
+`PhotonSession` lifecycle exist as a skeleton, and `refresh_interval` is
+validated at parse time. The refresh callback is deliberately a no-op, so the
+periodic loop does not fetch, parse, or swap config yet. Configuration is still
+fetched and compiled during initial open and after every successful reconnect.
+Periodic fetching and atomic config replacement remain out of scope until a
+follow-up change.
+
 ## Security and test boundaries
 
 - TLS with hostname verification is enabled by default. Use plaintext only for
