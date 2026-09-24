@@ -273,7 +273,7 @@ def test_parse_response_push_splits_id_and_reply():
 
 def test_parse_response_push_keeps_an_error_reply():
     """A failed request answers with a RespError inside the push, passed through as the value."""
-    error = RespError("PHOTON_AUTH_ERROR", "nope")
+    error = RespError("AUTH_ERROR", "nope")
     assert parse_response_push(RespPush(kind=PUSH_KIND_RESPONSE, items=[b"7", error])) == (
         "7",
         error,
