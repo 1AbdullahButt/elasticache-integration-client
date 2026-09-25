@@ -7,8 +7,8 @@
  * been sent may use the origin fallback window while no connector is available.
  *
  * The resolved config and its CEL predicates determine which requests are sent
- * to Photon. The middleware may pass predicate declines and disconnected
- * requests through to the origin.
+ * to Photon. The middleware may pass predicate declines, disconnected requests,
+ * and dropped-connection failures for idempotent operations through to origin.
  *
  * Each active connection owns a ConfigRefresher, which periodically re-issues
  * photon.config and swaps in the new config and predicates. A refresh that
@@ -24,6 +24,7 @@ import {
   PhotonConnectionLost,
   PhotonError,
   PhotonProtocolError,
+  PhotonRejectedError,
   PhotonTimeoutError,
 } from "./errors.js";
 import type { PhotonRequest, ResolvedConfig, PhotonResponse } from "./models.js";
@@ -36,6 +37,7 @@ import {
 import { PredicateEvaluator } from "./predicates.js";
 import { ConfigRefresher } from "./refresh.js";
 
+const PHOTON_AUTH_ERROR = "PHOTON_AUTH_ERROR";
 const DEFAULT_CONNECT_ATTEMPTS = 3;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_BASE_DELAY_MS = 100;
@@ -211,6 +213,15 @@ export class PhotonSession {
     return this.state === "open";
   }
 
+  get isConnectionHealthy(): boolean {
+    return (
+      this.state === "open" &&
+      this.connection === "alive" &&
+      this.connector !== undefined &&
+      this.connector.isReady
+    );
+  }
+
   get connectionState(): ConnectionState {
     return this.connection;
   }
@@ -376,7 +387,15 @@ export class PhotonSession {
     }
 
     const [command, args] = serializeRequest(request);
-    return parseRequestResponse(await currentConnector.execute(command, ...args));
+    try {
+      return parseRequestResponse(await currentConnector.execute(command, ...args));
+    } catch (error) {
+      if (error instanceof PhotonRejectedError && error.code === PHOTON_AUTH_ERROR) {
+        this.handleDisconnect(currentConnector);
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   /** Stop refresh and close active and recovering connectors. Idempotent. */

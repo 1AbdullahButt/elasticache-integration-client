@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from photon.exceptions import PhotonError, PhotonProtocolError
+from photon.exceptions import PhotonError, PhotonProtocolError, PhotonRejectedError
 from photon.models import PhotonRequest, PhotonResponse, RequestMetadata, ResolvedConfig
 from photon.protocol import (
     CONFIG_COMMAND,
@@ -124,13 +124,14 @@ def test_serialize_request_arg_count():
 
 def test_parse_request_response_error_frame_raises():
     """A RespError request reply raises rather than being returned as a response."""
-    with pytest.raises(PhotonError):
-        parse_request_response(RespError("ERR", "boom"))
+    with pytest.raises(PhotonRejectedError) as exc_info:
+        parse_request_response(RespError("ORIGIN_ERROR", "boom"))
+    assert exc_info.value.code == "ORIGIN_ERROR"
 
 
 def test_parse_request_response_non_array_raises():
     """A non-array request reply (e.g. a bare bulk string) is malformed."""
-    with pytest.raises(PhotonError):
+    with pytest.raises(PhotonProtocolError):
         parse_request_response(b"not-an-array")
 
 
@@ -223,6 +224,11 @@ def test_parse_request_response_skips_malformed_header_line():
     """A header line with no : separator is skipped rather than guessed."""
     resp = parse_request_response([200, b"content-type:application/json\ngarbage", b""])
     assert resp.headers == {"content-type": "application/json"}
+
+
+def test_parse_request_response_rejects_invalid_utf8_headers():
+    with pytest.raises(PhotonProtocolError):
+        parse_request_response([200, b"\xff", b""])
 
 
 # --- status validation --------------------------------------------------------

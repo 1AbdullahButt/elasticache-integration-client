@@ -6,6 +6,7 @@ import software.amazon.photon.connection.PhotonRequestCancellation;
 import software.amazon.photon.exception.PhotonCacheUnavailable;
 import software.amazon.photon.exception.PhotonConnectionError;
 import software.amazon.photon.exception.PhotonError;
+import software.amazon.photon.exception.PhotonRejectedError;
 import software.amazon.photon.model.PhotonRequest;
 import software.amazon.photon.model.PhotonResponse;
 import software.amazon.photon.model.ResolvedConfig;
@@ -39,9 +40,10 @@ import java.util.logging.Logger;
  * fresh credentials, repeats {@code AUTH} and {@code photon.config}, and keeps
  * trying until it succeeds or the session closes.
  *
- * <p>Requests are never replayed after being admitted to Photon. While no
- * connector is available, matching requests use origin fallback until the
- * configured fallback duration expires.
+ * <p>While no connector is available, matching requests use origin fallback
+ * until the configured fallback duration expires. After a request is admitted
+ * to Photon, the HTTP adapters allow direct origin fallback only when the
+ * connection drops and the operation is in the shared replay-safe catalog.
  *
  * <p>Resolved CEL predicates determine which requests are sent to Photon.
  * Requests with no matching predicate are declined for origin pass-through.
@@ -52,6 +54,7 @@ import java.util.logging.Logger;
 public class PhotonSession implements Closeable {
 
     private static final Logger LOGGER = Logger.getLogger(PhotonSession.class.getName());
+    private static final String PHOTON_AUTH_ERROR = "PHOTON_AUTH_ERROR";
     private static final AtomicInteger THREAD_IDS = new AtomicInteger();
 
     public enum State {
@@ -401,6 +404,12 @@ public class PhotonSession implements Closeable {
 
         try {
             return active.request(request, cancellation);
+        } catch (PhotonRejectedError failure) {
+            if (PHOTON_AUTH_ERROR.equals(failure.getCode())) {
+                beginReconnect(active);
+                return null;
+            }
+            throw failure;
         } catch (PhotonError failure) {
             if (active.isDead()) {
                 beginReconnect(active);
@@ -455,6 +464,12 @@ public class PhotonSession implements Closeable {
     public boolean isOpen() {
         State current = state;
         return current == State.OPEN || current == State.RECONNECTING;
+    }
+
+    /** Return whether a configured connector is currently available for requests. */
+    boolean isConnectionHealthy() {
+        PhotonConnector active = connector;
+        return state == State.OPEN && active != null && active.isReady();
     }
 
     private ConnectionSnapshot initializeWithTimeout(PhotonConnector next) {

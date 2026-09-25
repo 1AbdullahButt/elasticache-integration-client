@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.photon.exception.PhotonError;
 import software.amazon.photon.exception.PhotonProtocolError;
+import software.amazon.photon.exception.PhotonRejectedError;
 import software.amazon.photon.model.PhotonRequest;
 import software.amazon.photon.model.PhotonResponse;
 import software.amazon.photon.model.ResolvedConfig;
@@ -214,7 +215,9 @@ public final class PhotonProtocol {
     public static PhotonResponse parseRequestResponse(RespValue value) {
         if (value instanceof RespError) {
             RespError error = (RespError) value;
-            throw new PhotonError("Server error: " + error.getCode() + " " + error.getMessage());
+            throw new PhotonRejectedError(
+                    error.getCode(),
+                    "Server error: " + error.getCode() + " " + error.getMessage());
         }
         if (!(value instanceof RespArray)) {
             throw new PhotonProtocolError("Expected array response, got: " + (value != null ? value.getClass().getSimpleName() : "null"));
