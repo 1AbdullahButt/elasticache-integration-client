@@ -142,12 +142,27 @@ Reconnect delay doubles to `maxDelayMs`, with symmetric jitter applied to every
 attempt including the capped tail. Closing or destroying the SDK client
 interrupts reconnect backoff and prevents further attempts.
 
-AUTH normally uses `@aws/developer-toolkit-elasticache` to presign a short-lived
-IAM token from the SDK credential chain. The toolkit validates cache names and
-user IDs and normalizes them to lowercase before signing. A caller that already
-holds a token, or that authenticates against a local or test endpoint, supplies
-`connectorOptions.authProvider` instead: it returns `[userId, token]` and
-replaces token generation entirely, so no AWS credentials are required.
+AUTH normally uses `@aws/developer-toolkit-elasticache` to cache and
+automatically refresh short-lived IAM tokens from the SDK credential chain.
+The toolkit validates cache names and user IDs, normalizes them to lowercase
+before signing, and refreshes the cached token in the background. If Photon
+receives an AUTH rejection, it invalidates that token so the next connection
+attempt uses a newly signed one. Destroying the SDK client stops background
+token refresh. A caller that already holds a token, or that authenticates
+against a local or test endpoint, supplies `connectorOptions.authProvider`
+instead: it returns `[userId, token]` and replaces toolkit token management
+entirely, so no AWS credentials are required.
+
+The first token is minted lazily. Set `iamRefreshAfterSeconds` to customize its
+background refresh point; the accepted range, defaults, retry behavior, and
+safety margin are defined by the
+[toolkit token manager documentation](https://github.com/aws/developer-toolkit-elasticache/tree/release-2/node#caching-and-background-refresh).
+
+The `client()` factory creates this default manager, so destroying the returned
+SDK client also closes the manager and stops its timers. When
+`connectorOptions.authProvider` is supplied, Photon does not create or close
+that provider; the caller owns its lifecycle, matching Java's explicitly
+constructed `IamAuthTokenManager`.
 
 TLS is on by default and the server's certificate is verified against Node.js's
 default CA store — its bundled Mozilla roots, plus the OS trust store only when

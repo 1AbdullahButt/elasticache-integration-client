@@ -258,8 +258,15 @@ export interface PhotonConnectorOptions {
  * The object form is the Node equivalent of Python's callable provider class.
  */
 export type AuthProvider =
-  | (() => [string, string] | Promise<[string, string]>)
-  | { getAuth: () => [string, string] | Promise<[string, string]> };
+  | ((() => [string, string] | Promise<[string, string]>) & {
+      refreshAuth?: () => [string, string] | Promise<[string, string]>;
+    })
+  | {
+      getAuth: () => [string, string] | Promise<[string, string]>;
+      refreshAuth?: () => [string, string] | Promise<[string, string]>;
+    };
+
+class PhotonAuthenticationRejected extends PhotonConnectionError {}
 
 type ConnectedSocket = Socket | TLSSocket;
 
@@ -411,6 +418,13 @@ export class PhotonConnector {
       if (error instanceof PhotonTimeoutError) {
         await this.close();
         throw new PhotonConnectionError("IAM AUTH timed out", { cause: error });
+      }
+      if (error instanceof PhotonAuthenticationRejected) {
+        try {
+          await this.authProvider.refreshAuth?.();
+        } catch {
+          // Preserve the cache's AUTH rejection; the next attempt retries token refresh.
+        }
       }
       throw error;
     }
@@ -818,7 +832,7 @@ export class PhotonConnector {
   private verifyAuthReply(reply: RespValue): void {
     if (reply instanceof RespError) {
       this.markDead(new PhotonConnectionLost("AUTH rejected"));
-      throw new PhotonConnectionError(`IAM AUTH rejected: ${reply.code}`);
+      throw new PhotonAuthenticationRejected(`IAM AUTH rejected: ${reply.code}`);
     }
     if (reply !== "OK") {
       const error = new PhotonConnectionLost("unexpected AUTH reply");
