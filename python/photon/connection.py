@@ -27,6 +27,7 @@ from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FuturesTimeout
 
 from photon.exceptions import (
+    PhotonAuthError,
     PhotonConnectionLost,
     PhotonConnectionError,
     PhotonError,
@@ -438,6 +439,35 @@ class PhotonConnector:
             self.close()
             raise PhotonConnectionError(
                 f"HELLO 3 failed: reply did not report proto {_RESP3_PROTO}")
+
+    def authenticate(self) -> None:
+        """Re-authenticate the live connection with a fresh token, using a plain ``AUTH``.
+
+        Raises:
+            PhotonAuthError: AUTH command returned error from proxy (rejected) or unexpected reply
+            PhotonConnectionError: If AUTH times out — the connection is closed for FIFO safety.
+            PhotonError: If the provider fails to generate a token.
+        """
+        if not self._auth_provider:
+            return
+        user_id, token = self._auth_provider()
+        try:
+            reply = self.execute("AUTH", user_id.encode(), token.encode(),
+                                 timeout=self.config_timeout)
+        except PhotonTimeoutError as exc:
+            logger.warning("AUTH command timed out - closing connection")
+            self.close()
+            raise PhotonConnectionError("IAM AUTH timed out — connection closed") from exc
+        self._verify_auth_reply(reply)
+
+    def _verify_auth_reply(self, reply: RespValue) -> None:
+        """Validate a re-AUTH reply. Raises PhotonAuthError on rejection or unexpected shape."""
+        if isinstance(reply, RespError):
+            raise PhotonAuthError(f"IAM AUTH rejected: {reply.code}")
+        if reply != OK:
+            self.close()
+            raise PhotonAuthError(
+                f"IAM AUTH failed: unexpected reply of type {type(reply).__name__}")
 
     def _build_ssl_context(self) -> ssl.SSLContext | None:
         """TLS policy for the connection: TLS 1.2+, hostname check, required verification."""
