@@ -37,7 +37,7 @@ from photon.exceptions import (
 from photon.models import PhotonRequest, PhotonResponse, ResolvedConfig
 from photon.refresh import Refresher
 from photon.reconnect_policy import ReconnectPolicy
-from photon.predicates import compile_predicates, should_route_to_photon
+from photon.predicates import CompiledPredicate, compile_predicates, should_route_to_photon
 from photon.protocol import (
     parse_config_response,
     parse_request_response,
@@ -111,16 +111,17 @@ class PhotonSession:
         """
         policy = policy or ReconnectPolicy()
         self._overrides = overrides or {}
-        self._config = None
-        self._predicates = None
+        # Both are set by _configure() during init_connection(), which raises if it fails.
+        self._config: ResolvedConfig
+        self._predicates: list[CompiledPredicate]
         self._config_policy = config_policy or ConfigPolicy()
         self._config_deadline = 0.0
-        self._install_config_lock = threading.Lock()  # serializes checking a reply's connector and installing its config
+        self._install_config_lock = (
+            threading.Lock()
+        )  # serializes checking a reply's connector and installing its config
         self._config_refresher: Refresher | None = None
         self._reauth_runner: Refresher | None = None
-        self._connection_manager = ConnectionManager(
-            connector_factory, self._configure, policy
-        )
+        self._connection_manager = ConnectionManager(connector_factory, self._configure, policy)
         self._connection_manager.init_connection()
         try:
             self._config_refresher = Refresher(
@@ -175,7 +176,8 @@ class PhotonSession:
         except (PhotonOverridesRejected, PhotonConfigUnevaluable) as exc:
             logger.error(
                 "Configuring a connection failed: %s. The connection is closed and retried",
-                _config_failure_cause(exc), exc_info=True,
+                _config_failure_cause(exc),
+                exc_info=True,
             )
             raise
         if not installed:
@@ -254,7 +256,9 @@ class PhotonSession:
         if isinstance(exc, (PhotonOverridesRejected, PhotonConfigUnevaluable)):
             logger.error(
                 "Config refresh failed: %s. Keeping the last good config until the staleness "
-                "window drops the connection", _config_failure_cause(exc), exc_info=True,
+                "window drops the connection",
+                _config_failure_cause(exc),
+                exc_info=True,
             )
         else:
             logger.warning("Config refresh failed; keeping the current config", exc_info=True)
@@ -301,7 +305,7 @@ class PhotonSession:
         if not connector:
             if not self._connection_manager.fallback_allowed():
                 raise PhotonCacheUnavailable(endpoint_url=request.url)
-            return     # pass through
+            return None  # pass through
 
         command, args = serialize_request(request)
         try:
