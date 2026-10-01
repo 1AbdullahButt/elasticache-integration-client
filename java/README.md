@@ -16,11 +16,12 @@ an expired fallback window, and shutdown are surfaced without starting an
 origin request. SDK retries, response deserialization, and caller-provided
 override configuration remain in the normal SDK pipeline.
 
-IAM token generation is provided by the Amazon ElastiCache developer toolkit.
-The toolkit validates and lowercases cache names and user IDs, resolves fresh
-AWS credentials for every token, and owns the fixed 15-minute SigV4 signing
-contract. Photon sends the resulting bearer token only in the TLS-protected
-`AUTH` exchange; origin request signing remains owned by the AWS SDK.
+IAM token generation and refresh are provided by the Amazon ElastiCache
+developer toolkit. The toolkit validates and lowercases cache names and user
+IDs, resolves fresh AWS credentials for every newly signed token, and owns the
+SigV4 signing contract. Photon sends the resulting bearer token
+only in the TLS-protected `AUTH` exchange; origin request signing remains owned
+by the AWS SDK.
 
 ## Request routing
 
@@ -139,6 +140,28 @@ a bounded daemon executor. Applications can supply a caller-managed executor
 with `asyncExecutor(Executor)`. If that executor rejects a request because it is
 at capacity, Photon sends the buffered request through the origin fallback.
 Photon closes only transports and executors it creates itself.
+
+## IAM token refresh
+
+When a concrete `IamAuthTokenProvider` is supplied to `PhotonClient`,
+`PhotonHandle`, or `PhotonAsyncHandle`, Photon creates and owns the toolkit
+token manager. It caches the current IAM token and refreshes it in the
+background. The refresh defaults, accepted range, retry behavior, and safety
+margin are defined by the
+[toolkit token manager documentation](https://github.com/aws/developer-toolkit-elasticache/tree/release-2/java#caching-and-background-refresh).
+Configure a custom refresh point with
+`IamAuthTokenProvider.Builder.refreshAfter(Duration)` when needed.
+
+Photon asks its manager for credentials on every connection and reconnect, so a
+reconnect uses the latest valid token without synchronously signing a new one.
+If Photon rejects cached IAM credentials during `AUTH`, the failed connection
+is discarded, the manager force-refreshes the token with newly resolved AWS
+credentials, and the existing bounded connect or reconnect policy opens the
+next connection with the replacement token. Persistent IAM configuration
+errors still surface after the configured connection-attempt limit.
+Closing the Photon result or handle also closes the internally created manager;
+no additional lifecycle step is required. Other caller-supplied auth providers
+remain caller-owned.
 
 ## Reconnection and fallback
 

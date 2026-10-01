@@ -25,6 +25,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import software.amazon.photon.auth.AuthCredentials;
+import software.amazon.photon.exception.PhotonAuthenticationError;
 import software.amazon.photon.exception.PhotonConnectionError;
 import software.amazon.photon.exception.PhotonConnectionLost;
 import software.amazon.photon.exception.PhotonError;
@@ -36,6 +37,7 @@ import software.amazon.photon.model.ResolvedConfig;
 import software.amazon.photon.protocol.PhotonProtocol;
 import software.amazon.photon.protocol.SerializedCommand;
 import software.amazon.photon.resp.RespCodec;
+import software.amazon.photon.resp.RespError;
 import software.amazon.photon.resp.RespSimpleString;
 import software.amazon.photon.resp.RespValue;
 
@@ -342,6 +344,10 @@ public class PhotonConnector implements Closeable {
             RespValue authReply = reader.readFrame();
 
             // Expect +OK
+            if (authReply instanceof RespError) {
+                markDead();
+                throw new PhotonAuthenticationError("AUTH failed: " + authReply);
+            }
             if (!(authReply instanceof RespSimpleString)) {
                 markDead();
                 throw new PhotonConnectionError("AUTH failed: unexpected response type: " + authReply);
