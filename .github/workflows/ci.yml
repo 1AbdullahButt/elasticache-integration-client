@@ -51,7 +51,8 @@ jobs:
           # Shared contracts and this workflow affect every client.
           shared='^(shared/|\.github/workflows/ci\.yml$)'
           for client in python java node; do
-            if echo "$changed" | grep -Eq "$shared|^$client/|^\.github/workflows/$client-ci\.yml$"; then
+            if echo "$changed" | grep -Eq \
+              "$shared|^$client/|^\.github/workflows/$client-(ci|release)\.yml$"; then
               echo "$client=true" >> "$GITHUB_OUTPUT"
             else
               echo "$client=false" >> "$GITHUB_OUTPUT"
