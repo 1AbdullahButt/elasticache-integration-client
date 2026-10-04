@@ -12,7 +12,7 @@ updates:
     directory: /node
     schedule:
       interval: weekly
-    # Photon is a library. Only raise a dependency's minimum version when the
+    # This is a library. Only raise a dependency's minimum version when the
     # new release is outside the current range, so consumers aren't forced to
     # upgrade. The lockfile still picks up new versions inside the range.
     versioning-strategy: increase-if-necessary
@@ -46,7 +46,7 @@ updates:
     directory: /python
     schedule:
       interval: weekly
-    # Photon is a library. Only raise a dependency's minimum version when the
+    # This is a library. Only raise a dependency's minimum version when the
     # new release is outside the current range, so consumers aren't forced to
     # upgrade.
     versioning-strategy: increase-if-necessary
