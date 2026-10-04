@@ -155,8 +155,8 @@ config, predicates, and interval as last-known-good. Every config reply, null
 reply, open, and reconnect restarts the staleness window. A refresh that fails
 after `stalenessDurationSeconds` (default 3600) have passed without
 confirmation drops the connector into the normal reconnect and origin-fallback
-path. `PhotonOverridesRejected` (`CONFIG_INVALID`) and `PhotonConfigUnevaluable` 
-(a predicate that cannot be compiled, which rejects the whole config) are logged 
+path. `PhotonOverridesRejected` (`CONFIG_INVALID`) and `PhotonConfigUnevaluable`
+(a predicate that cannot be compiled, which rejects the whole config) are logged
 at `SEVERE` on every occurrence.
 
 ## Security and test boundaries
@@ -176,7 +176,12 @@ at `SEVERE` on every occurrence.
 ## Generated and build files
 
 - Do not commit generated `build/`, `.gradle/` contents, or IDE project files.
-- This prototype has no publish automation; do not add publishing behavior
-  unless explicitly requested.
+- Release publishing is configured by `release.gradle.kts` and enabled only
+  with `-PreleasePublishing`, so normal Java 8 builds do not load the
+  JDK-11+ publishing plugin. The tag-triggered workflow builds and smoke-tests
+  artifacts before publish-step-scoped credentials sign and publish them from
+  the protected `release` environment. Publication, propagation verification,
+  and GitHub release creation are separate jobs. Manual workflow dispatches
+  perform the full validation as a non-publishing dry run.
 
 Keep changes small and reviewable.

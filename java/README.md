@@ -2,6 +2,9 @@
 
 Photon integration for AWS SDK for Java v2 DynamoDB clients.
 
+Published releases use the Maven coordinates
+`software.amazon.photon:photon-java:<version>`.
+
 Photon connects and authenticates before returning the SDK client. Requests are
 sent to Photon when the configured predicates match and otherwise use the
 configured DynamoDB origin transport. While reconnecting, requests that have
@@ -233,6 +236,10 @@ Git submodule and built as part of `./gradlew build`. Initialize it after
 cloning with `git submodule update --init --recursive`. Maven must be available
 on `PATH` for the sourced toolkit build.
 
+The release JAR bundles the sourced toolkit classes because that toolkit is not
+yet independently available from Maven Central. Its AWS SDK dependencies remain
+ordinary transitive dependencies in the generated Photon POM.
+
 Gradle runs on JDK 21 because Error Prone 2.50 requires JDK 21 and
 Gradle 8.14 cannot run on JDK 25. The compiler emits Java 8 bytecode
 (`options.release = 8`). Tests run on Java 8, 11, 17, and 21. To run them on
@@ -243,3 +250,29 @@ another installed JDK, pass `-PtestJavaVersion=<n>`, for example
 (`./gradlew spotlessApply` fixes formatting), writes JaCoCo reports to
 `build/reports/jacoco/test/`, builds the sources and Javadoc JARs, and checks
 the JAR contents.
+
+## Releasing
+
+Java releases are built from annotated `vMAJOR.MINOR.PATCH` or
+`vMAJOR.MINOR.PATCH-rc.N` tags. The tag version must match `version` in
+`build.gradle.kts`.
+
+The `Java Release` workflow tests Java 8, 11, 17, and 21, builds the main,
+sources, and Javadocs JARs once, checks their contents, and runs clean Gradle
+and Maven consumer smoke tests before the approval-protected `release`
+environment signs and publishes them to Maven Central.
+
+Configure these secrets on the `release` GitHub environment:
+
+- `MAVEN_CENTRAL_USERNAME`
+- `MAVEN_CENTRAL_PASSWORD`
+- `MAVEN_SIGNING_KEY` (ASCII-armored private PGP key)
+- `MAVEN_SIGNING_PASSWORD`
+
+After Maven Central propagation, the workflow resolves the published version
+from clean consumers and attaches the published JARs and POM to the GitHub
+release. Publication, propagation verification, and GitHub release creation
+are separate jobs so post-publish failures can be retried without attempting
+to republish an existing version. A manual workflow run performs the same test,
+packaging, and consumer-smoke stages without entering the release environment
+or publishing to Maven Central.
