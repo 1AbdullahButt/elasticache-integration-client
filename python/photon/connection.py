@@ -55,7 +55,7 @@ class _SocketReader:
     def __init__(self, stream: asyncio.StreamReader, read_size: int = _DEFAULT_READ_SIZE) -> None:
         self._stream = stream
         self._read_size = read_size
-        self._buf = b""
+        self._buf = bytearray()
 
     async def read_frame(self) -> RespValue:
         """Return the next complete RESP value, reading more bytes as needed.
@@ -72,7 +72,7 @@ class _SocketReader:
                     raise PhotonConnectionLost("connection closed by peer")
                 self._buf += chunk
                 continue
-            self._buf = self._buf[consumed:]  # retain any trailing bytes for the next frame
+            del self._buf[:consumed]  # retain any trailing bytes for the next frame
             return value
 
 
