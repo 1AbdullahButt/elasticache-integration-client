@@ -56,12 +56,21 @@ export interface PhotonCompatibleClient {
   destroy(): void;
 }
 
-function normalizeBody(body: unknown): Buffer {
+/**
+ * Whether `body` fits in one `photon.request` frame. A missing body does. Any
+ * body that is not bytes-like, such as a stream, does not: reading it to
+ * serialize would consume it, leaving nothing for the origin send.
+ */
+function isCarriableBody(body: unknown): body is string | Uint8Array | null | undefined {
+  return body == null || typeof body === "string" || body instanceof Uint8Array;
+}
+
+/** Normalize a carriable prepared body to bytes. A missing body is an empty body. */
+function normalizeBody(body: string | Uint8Array | null | undefined): Buffer {
   if (body == null) return Buffer.alloc(0);
   if (Buffer.isBuffer(body)) return body;
   if (typeof body === "string") return Buffer.from(body, "utf8");
-  if (body instanceof Uint8Array) return Buffer.from(body);
-  throw new PhotonError("Streaming AWS request bodies are not supported");
+  return Buffer.from(body);
 }
 
 /** AWS SigV4 authentication headers, removed before forwarding to Photon. */
@@ -81,12 +90,14 @@ function stripSigningHeaders(headers: Record<string, string>): Record<string, st
  *
  * The SDK has already signed the request by this point; the SigV4
  * authentication headers are stripped so Photon receives an unsigned request.
+ * Returns undefined for a body that is not bytes-like, such as a stream; the
+ * caller passes the request through to the origin.
  */
 export function awsToPhotonRequest(
   request: unknown,
   service: string,
   commandName?: string,
-): PhotonRequest {
+): PhotonRequest | undefined {
   if (!HttpRequest.isInstance(request)) {
     throw new PhotonError("Photon middleware requires an AWS HttpRequest");
   }
@@ -101,11 +112,14 @@ export function awsToPhotonRequest(
     throw new PhotonError("Malformed Photon middleware command metadata");
   }
 
+  const body = request.body;
+  if (!isCarriableBody(body)) return undefined;
+
   return new PhotonRequest({
     method: request.method,
     url: formatUrl(request),
     headers: stripSigningHeaders(request.headers),
-    body: normalizeBody(request.body),
+    body: normalizeBody(body),
     metadata: new RequestMetadata({ service, operation }),
   });
 }
@@ -125,6 +139,7 @@ export function photonMiddleware<Input extends object, Output extends object>(
 ): DeserializeMiddleware<Input, Output> {
   return (next, context: HandlerExecutionContext) => async (args) => {
     const request = awsToPhotonRequest(args.request, service, context.commandName);
+    if (request === undefined) return next(args);
 
     try {
       const response = await session.request(request);

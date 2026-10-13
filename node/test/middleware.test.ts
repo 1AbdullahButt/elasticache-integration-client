@@ -68,7 +68,7 @@ describe("awsToPhotonRequest", () => {
   it("preserves the final serialized unsigned Smithy request and explicit service metadata", () => {
     const smithyRequest = request(Buffer.from("payload"));
 
-    const photonRequest = awsToPhotonRequest(smithyRequest, "dynamodb", "GetItemCommand");
+    const photonRequest = awsToPhotonRequest(smithyRequest, "dynamodb", "GetItemCommand")!;
 
     expect(photonRequest).toEqual(
       new PhotonRequest({
@@ -103,7 +103,7 @@ describe("awsToPhotonRequest", () => {
       body: Buffer.from("payload"),
     });
 
-    const photonRequest = awsToPhotonRequest(signed, "dynamodb", "GetItemCommand");
+    const photonRequest = awsToPhotonRequest(signed, "dynamodb", "GetItemCommand")!;
 
     expect(photonRequest.headers).toEqual({
       host: "dynamodb.us-east-1.amazonaws.com",
@@ -116,23 +116,30 @@ describe("awsToPhotonRequest", () => {
   it.each([
     [undefined, Buffer.alloc(0)],
     [null, Buffer.alloc(0)],
+    ["", Buffer.alloc(0)],
     ["payload", Buffer.from("payload")],
     [Buffer.from("payload"), Buffer.from("payload")],
     [new Uint8Array([112, 97, 121, 108, 111, 97, 100]), Buffer.from("payload")],
+    [new Uint8Array(), Buffer.alloc(0)],
   ])("normalizes %s request bodies", (body, expected) => {
-    expect(awsToPhotonRequest(request(body), "svc", "RunCommand").body).toEqual(expected);
+    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")!.body).toEqual(expected);
   });
 
   it("reuses Buffer request bodies", () => {
     const body = Buffer.from("payload");
 
-    expect(awsToPhotonRequest(request(body), "svc", "RunCommand").body).toBe(body);
+    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")!.body).toBe(body);
   });
 
-  it("rejects streaming and unsupported request bodies", () => {
-    expect(() =>
-      awsToPhotonRequest(request(Readable.from(["stream"])), "svc", "RunCommand"),
-    ).toThrow(new PhotonError("Streaming AWS request bodies are not supported"));
+  it.each([
+    ["a Readable", Readable.from(["stream"])],
+    ["a web ReadableStream", new ReadableStream()],
+    ["a Blob", new Blob(["payload"])],
+    ["a non-Uint8Array typed array", new Int8Array()],
+    ["0", 0],
+    ["false", false],
+  ])("declines an uncarriable %s request body", (_name, body) => {
+    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")).toBeUndefined();
   });
 
   it("rejects a non-Smithy request", () => {
@@ -148,7 +155,7 @@ describe("awsToPhotonRequest", () => {
     ["GetItemCommand", "GetItem"],
     ["Custom", "Custom"],
   ])("derives operation %s as %s", (commandName, operation) => {
-    expect(awsToPhotonRequest(request(), "svc", commandName).metadata.operation).toBe(operation);
+    expect(awsToPhotonRequest(request(), "svc", commandName)!.metadata.operation).toBe(operation);
   });
 });
 
@@ -257,6 +264,24 @@ describe("photon middleware", () => {
 
     await expect(handler({ input: {}, request: request() })).rejects.toBe(sessionError);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("passes a streaming request body through to the origin without calling Photon", async () => {
+    const body = Readable.from(["payload"]);
+    const streamingRequest = request(body);
+    const session = fakeSession();
+    const next = vi.fn<FinalizeHandler<object, object>>(async (args) => {
+      expect(args.request).toBe(streamingRequest);
+      return { response: new HttpResponse({ statusCode: 200 }) };
+    });
+    const handler = photonMiddleware("s3", session)(next, { commandName: "PutObjectCommand" });
+
+    await expect(handler({ input: {}, request: streamingRequest })).resolves.toEqual({
+      response: expect.any(HttpResponse),
+    });
+    expect(session.request).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+    expect(body.readableDidRead).toBe(false);
   });
 
   it("does not pass Photon request validation failures through to the origin", async () => {

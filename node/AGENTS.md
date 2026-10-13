@@ -92,14 +92,14 @@ require the corresponding tests, README, and package checks to change with it.
   with fresh AUTH and config, per-outage origin fallback while disconnected,
   and idempotent `close()`/`destroy()`.
 - **Middleware path:** flag changes that use a non-final serialized request,
-  bypass normal SDK deserialization/retry behavior, silently add unsupported
-  streaming-body behavior, or destroy the SDK before Photon. Safe path: preserve
-  final serialized unsigned request ordering, synthetic responses, explicit
-  streaming-body rejection, dropped-connection fallback only for cataloged
-  operations, healthy-connection `ORIGIN_ERROR` retries only for cataloged
-  operations, other RESP/non-idempotent/validation/shutdown failures
-  propagating, and
-  Photon-first teardown.
+  bypass normal SDK deserialization/retry behavior, consume a body that is not
+  bytes-like, or destroy the SDK before Photon. Safe path: preserve final
+  serialized unsigned request ordering, synthetic responses, bodies that are
+  not bytes-like, such as streams, passed through to the origin without
+  calling Photon, dropped-connection fallback
+  only for cataloged operations, healthy-connection `ORIGIN_ERROR` retries
+  only for cataloged operations, other RESP/non-idempotent/validation/shutdown
+  failures propagating, and Photon-first teardown.
 - **Authentication and transport:** flag divergence from the SDK credential
   provider, stale IAM tokens, reusable connections after initial AUTH failure,
   TLS verification that is off by default or off implicitly, or plaintext by
