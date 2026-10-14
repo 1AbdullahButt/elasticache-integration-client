@@ -2,8 +2,8 @@
 
 :class:`ConnectionManager` keeps exactly one live connector. It opens the first one, hands each new
 one to an injected ``configure`` callback, watches for the connection ending,
-and builds a replacement on a background thread. It knows nothing about Photon's commands,
-predicates, or responses — that all stays in :mod:`photon.session`.
+and builds a replacement on a background thread. It knows nothing about ElastiCacheIntegrations's commands,
+predicates, or responses — that all stays in :mod:`elasticache_integrations.session`.
 
 While a replacement is being built there is no connector to serve with, so the manager opens a
 fallback window: for as long as it lasts, the session may decline requests and let the caller send
@@ -20,14 +20,14 @@ from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FuturesTimeout
 from enum import Enum
 
-from photon.connection import PhotonConnector
-from photon.exceptions import PhotonConnectionError
-from photon.reconnect_policy import ReconnectPolicy
+from elasticache_integrations.connection import ElastiCacheIntegrationsConnector
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsConnectionError
+from elasticache_integrations.reconnect_policy import ReconnectPolicy
 
 logger = logging.getLogger(__name__)
 
 _RECONNECT_JOIN_TIMEOUT = 2.0  # close() waits this long for the reconnect thread to stop
-_CONNECT_THREAD = "photon-connect"
+_CONNECT_THREAD = "elasticache-integrations-connect"
 
 
 def _settle(outcome: Future, run: Callable[..., None], *args) -> None:
@@ -54,8 +54,8 @@ class ConnectionManager:
 
     def __init__(
         self,
-        connector_factory: Callable[[], PhotonConnector],
-        configure: Callable[[PhotonConnector], None],
+        connector_factory: Callable[[], ElastiCacheIntegrationsConnector],
+        configure: Callable[[ElastiCacheIntegrationsConnector], None],
         policy: ReconnectPolicy,
     ) -> None:
         """Create a connection manager. Nothing is connected until :meth:`init_connection`.
@@ -66,10 +66,10 @@ class ConnectionManager:
                 would make it retry forever.
             configure: Called with each freshly connected connector to make it usable — the
                 ``HELLO 3`` handshake and
-                the ``photon.config`` exchange. Anything it raises fails that attempt, and the
+                the ``aws.config`` exchange. Anything it raises fails that attempt, and the
                 connector is closed.
             policy: Reconnect and fallback behavior; see
-                :class:`~photon.reconnect_policy.ReconnectPolicy`.
+                :class:`~elasticache_integrations.reconnect_policy.ReconnectPolicy`.
         """
         self._factory = connector_factory
         self._configure = configure
@@ -79,8 +79,10 @@ class ConnectionManager:
         # _connector, _candidate and _fallback_deadline all move under it.
         self._state_lock = threading.Lock()
         self._state = ConnectionState.INIT
-        self._connector: PhotonConnector | None = None
-        self._candidate: PhotonConnector | None = None  # being brought up, not serving yet
+        self._connector: ElastiCacheIntegrationsConnector | None = None
+        self._candidate: ElastiCacheIntegrationsConnector | None = (
+            None  # being brought up, not serving yet
+        )
         # monotonic deadline until which requests may pass through; only meaningful while RECONNECTING.
         self._fallback_deadline = 0.0
         # Set while a live connector is available; cleared on a drop. A request with no connector
@@ -103,7 +105,7 @@ class ConnectionManager:
         return self._policy
 
     @property
-    def connector(self) -> PhotonConnector | None:
+    def connector(self) -> ElastiCacheIntegrationsConnector | None:
         """The live connector, or ``None`` while there is none.
 
         Read once per request and then used: the reconnect thread may replace it concurrently.
@@ -114,7 +116,7 @@ class ConnectionManager:
         """Whether a request may still be passed through while there is no connector."""
         return time.monotonic() < self._fallback_deadline
 
-    def invalidate_connection(self, connector: PhotonConnector) -> None:
+    def invalidate_connection(self, connector: ElastiCacheIntegrationsConnector) -> None:
         """Remove a serving connector and begin reconnecting.
 
         Used when a valid protocol reply says the connection's authentication is no longer usable,
@@ -141,7 +143,7 @@ class ConnectionManager:
         connector = self._connector
         return self._state is ConnectionState.ALIVE and connector is not None and connector.is_alive
 
-    def wait_for_connector(self) -> PhotonConnector | None:
+    def wait_for_connector(self) -> ElastiCacheIntegrationsConnector | None:
         """Return the live connector, waiting for a reconnect only right after a drop; else ``None``."""
         connector = self._connector
         if connector is not None and connector.is_alive:
@@ -162,7 +164,7 @@ class ConnectionManager:
         by ``policy.connection_timeout``, so the caller's startup path cannot hang.
 
         Raises:
-            PhotonError: No attempt succeeded. Starting fails loudly rather than handing back a
+            ElastiCacheIntegrationsError: No attempt succeeded. Starting fails loudly rather than handing back a
                 manager that never caches. Whatever the last attempt raised propagates unchanged,
                 so a ``configure`` that raises something else surfaces that instead.
         """
@@ -175,16 +177,20 @@ class ConnectionManager:
                 if not isinstance(exc, Exception) or attempt == self._policy.connect_attempts:
                     self.close()
                     raise
-                logger.debug("photon connect attempt %d failed (%s); retrying", attempt, exc)
+                logger.debug(
+                    "elasticache_integrations connect attempt %d failed (%s); retrying",
+                    attempt,
+                    exc,
+                )
                 time.sleep(self._policy.delay_for(attempt))
         self._state = ConnectionState.ALIVE
         self._connected.set()
         self._reconnect_thread = threading.Thread(
-            target=self._reconnect_loop, name="photon-reconnect", daemon=True
+            target=self._reconnect_loop, name="elasticache-integrations-reconnect", daemon=True
         )
         self._reconnect_thread.start()
 
-    def _connect_and_configure(self, connector: PhotonConnector) -> None:
+    def _connect_and_configure(self, connector: ElastiCacheIntegrationsConnector) -> None:
         """Open ``connector``'s transport and configure it, closing it if either step fails.
 
         Every connection goes through here, so each one gets fresh credentials and the latest
@@ -197,7 +203,7 @@ class ConnectionManager:
             connector.close()
             raise
 
-    def _open_connection(self, timeout: float | None = None) -> PhotonConnector:
+    def _open_connection(self, timeout: float | None = None) -> ElastiCacheIntegrationsConnector:
         """Build a connection and return it live: connected, authenticated, and configured.
 
         Without a ``timeout`` this runs here and blocks for as long as the connector's own
@@ -218,7 +224,7 @@ class ConnectionManager:
         with self._state_lock:
             if self._state is ConnectionState.CLOSED:
                 connector.close()
-                raise PhotonConnectionError("connection manager is closed")
+                raise ElastiCacheIntegrationsConnectionError("connection manager is closed")
             # Reachable by close() until it is published: no step below watches for a close, so
             # closing the connection under one is what ends it early.
             self._candidate = connector
@@ -237,7 +243,7 @@ class ConnectionManager:
                     outcome.result(timeout=timeout)
                 except FuturesTimeout as exc:
                     connector.close()
-                    raise PhotonConnectionError(
+                    raise ElastiCacheIntegrationsConnectionError(
                         f"opening a connection timed out after {timeout}s"
                     ) from exc
         finally:
@@ -262,7 +268,7 @@ class ConnectionManager:
                 if self._begin_reconnect():
                     self._reconnect_forever()
             except Exception:
-                logger.exception("unexpected error in the photon reconnect loop")
+                logger.exception("unexpected error in the elasticache_integrations reconnect loop")
                 if self._closing.wait(self._policy.max_delay):
                     return
                 self._reconnect_needed.set()
@@ -295,7 +301,7 @@ class ConnectionManager:
             self._connector = None
             self._state = ConnectionState.RECONNECTING
         logger.warning(
-            "photon connection lost; reconnecting in the background, retry connection; "
+            "elasticache_integrations connection lost; reconnecting in the background, retry connection; "
             "upon failure requests fall back to the origin service"
         )
         if current_connector:
@@ -317,7 +323,7 @@ class ConnectionManager:
             except Exception as exc:
                 delay = self._policy.delay_for(attempt)
                 logger.debug(
-                    "photon reconnect attempt %d failed (%s); retrying in %.3fs",
+                    "elasticache_integrations reconnect attempt %d failed (%s); retrying in %.3fs",
                     attempt,
                     exc,
                     delay,
@@ -331,7 +337,7 @@ class ConnectionManager:
             candidate.close()  # brought up but never published: ours to close, unlike a failed one
             return
 
-    def _finish_reconnect(self, candidate: PhotonConnector, attempt: int) -> bool:
+    def _finish_reconnect(self, candidate: ElastiCacheIntegrationsConnector, attempt: int) -> bool:
         """Publish a successfully brought-up connector.
 
         Returns ``True`` when the candidate is published, or ``False`` if we closed
@@ -344,7 +350,9 @@ class ConnectionManager:
             self._connector = candidate
             self._state = ConnectionState.ALIVE
             self._connected.set()
-        logger.info("photon connection re-established after %d attempt(s)", attempt)
+        logger.info(
+            "elasticache_integrations connection re-established after %d attempt(s)", attempt
+        )
         return True
 
     def close(self) -> None:
@@ -366,7 +374,8 @@ class ConnectionManager:
             thread.join(timeout=_RECONNECT_JOIN_TIMEOUT)
             if thread.is_alive():
                 logger.warning(
-                    "photon reconnect thread did not stop within %ss", _RECONNECT_JOIN_TIMEOUT
+                    "elasticache_integrations reconnect thread did not stop within %ss",
+                    _RECONNECT_JOIN_TIMEOUT,
                 )
 
         if connector:

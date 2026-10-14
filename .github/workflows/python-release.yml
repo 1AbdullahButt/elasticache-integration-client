@@ -72,7 +72,7 @@ jobs:
           esac
 
           project_name="$(python scripts/release.py project-name)"
-          echo "artifact-name=photon-python-${version}" >>"${GITHUB_OUTPUT}"
+          echo "artifact-name=elasticache-integrations-python-${version}" >>"${GITHUB_OUTPUT}"
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
           echo "project-name=${project_name}" >>"${GITHUB_OUTPUT}"
           echo "should-publish=${should_publish}" >>"${GITHUB_OUTPUT}"
@@ -84,7 +84,7 @@ jobs:
         run: python -m twine check release/dist/*
 
       - name: Check packaged idempotency catalog
-        run: unzip -l release/dist/*.whl | grep -q "photon/idempotent-operations.json"
+        run: unzip -l release/dist/*.whl | grep -q "elasticache_integrations/idempotent-operations.json"
 
       - name: Upload immutable release distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -131,13 +131,13 @@ jobs:
           import os
           from importlib.metadata import version
 
-          import photon
+          import elasticache_integrations
 
           expected = os.environ["EXPECTED_VERSION"]
-          assert version("photon-python") == expected
-          assert photon.__version__ == expected
-          for name in ("client", "PhotonCacheUnavailable", "PhotonConfigError", "PhotonError"):
-              assert hasattr(photon, name), name
+          assert version("elasticache-integrations-python") == expected
+          assert elasticache_integrations.__version__ == expected
+          for name in ("client", "ElastiCacheIntegrationsCacheUnavailable", "ElastiCacheIntegrationsConfigError", "ElastiCacheIntegrationsError"):
+              assert hasattr(elasticache_integrations, name), name
           PY
 
   publish:
@@ -185,7 +185,7 @@ jobs:
           PROJECT_NAME: ${{ needs.build.outputs.project-name }}
         run: |
           set -euo pipefail
-          smoke_env="${RUNNER_TEMP}/photon-pypi-smoke"
+          smoke_env="${RUNNER_TEMP}/elasticache-integrations-pypi-smoke"
           python -m venv "${smoke_env}"
           "${smoke_env}/bin/python" -m pip install --upgrade pip
 
@@ -205,13 +205,13 @@ jobs:
           import os
           from importlib.metadata import version
 
-          import photon
+          import elasticache_integrations
 
           expected = os.environ["EXPECTED_VERSION"]
-          assert version("photon-python") == expected
-          assert photon.__version__ == expected
-          for name in ("client", "PhotonCacheUnavailable", "PhotonConfigError", "PhotonError"):
-              assert hasattr(photon, name), name
+          assert version("elasticache-integrations-python") == expected
+          assert elasticache_integrations.__version__ == expected
+          for name in ("client", "ElastiCacheIntegrationsCacheUnavailable", "ElastiCacheIntegrationsConfigError", "ElastiCacheIntegrationsError"):
+              assert hasattr(elasticache_integrations, name), name
           PY
 
   github-release:

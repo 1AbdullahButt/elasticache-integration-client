@@ -1,9 +1,9 @@
-"""Generic RESP3 wire codec for the Photon client.
+"""Generic RESP3 wire codec for the ElastiCacheIntegrations client.
 
 Owns the RESP value types (:data:`RespValue`, :class:`RespError`), the framing functions
 (:func:`encode_resp`, :func:`decode_resp`), and :class:`IncompleteFrame`. ``decode_resp`` distinguishes a
 **truncated** frame (more bytes are coming → :class:`IncompleteFrame`) from genuine **garbage**
-(unparseable input → :class:`~photon.exceptions.PhotonProtocolError`), so an incremental reader can
+(unparseable input → :class:`~elasticache_integrations.exceptions.ElastiCacheIntegrationsProtocolError`), so an incremental reader can
 tell "need more bytes" apart from "the stream is corrupt".
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from photon.exceptions import PhotonProtocolError
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsProtocolError
 
 _CRLF = b"\r\n"
 
@@ -35,7 +35,7 @@ class RespError:
 class RespPush:
     """A RESP3 push frame (``>``): an out-of-band message, not the reply to any command.
 
-    The first element is the kind (e.g. ``b"photon.response"``); the rest are its items.
+    The first element is the kind (e.g. ``b"aws.response"``); the rest are its items.
     """
 
     kind: bytes
@@ -63,11 +63,11 @@ class IncompleteFrame(Exception):
 def encode_resp(command: str, *args: bytes) -> bytes:
     r"""Encode a command and its binary args as one RESP3 frame, ready for the socket::
 
-    encode_resp("photon.request", b"POST", b"https://x/") ->
+    encode_resp("aws.request", b"POST", b"https://x/") ->
 
     3 values       the command               arg 1            arg 2
     │              │                         │                │
-    *3\r\n $14\r\n photon.request\r\n $4\r\n POST\r\n $10\r\n https://x/\r\n
+    *3\r\n $14\r\n aws.request\r\n $4\r\n POST\r\n $10\r\n https://x/\r\n
            │                          │               │
            value is 14 bytes long     4 bytes long    10 bytes long
     """
@@ -79,11 +79,11 @@ def encode_resp(command: str, *args: bytes) -> bytes:
 
 
 def _parse_int(header: bytes, what: str) -> int:
-    """Parse a numeric RESP header, raising PhotonProtocolError on garbage."""
+    """Parse a numeric RESP header, raising ElastiCacheIntegrationsProtocolError on garbage."""
     try:
         return int(header)
     except ValueError as exc:
-        raise PhotonProtocolError(f"Malformed RESP {what}: {header!r}") from exc
+        raise ElastiCacheIntegrationsProtocolError(f"Malformed RESP {what}: {header!r}") from exc
 
 
 def _decode_simple_string(
@@ -109,7 +109,7 @@ def _decode_null(data: RespBuffer, header: bytes, after_header: int) -> tuple[Re
     """Decode a ``_`` null, the RESP3 form. A valid one carries no body, so a payload is
     rejected rather than ignored: a garbled null would otherwise pass as a real one."""
     if header:
-        raise PhotonProtocolError(f"Malformed RESP null: {header!r}")
+        raise ElastiCacheIntegrationsProtocolError(f"Malformed RESP null: {header!r}")
     return None, after_header
 
 
@@ -150,7 +150,7 @@ def _decode_push(data: RespBuffer, header: bytes, after_header: int) -> tuple[Re
     if isinstance(kind, str):  # a kind sent as a simple string rather than a bulk string
         kind = kind.encode()
     elif not isinstance(kind, bytes):
-        raise PhotonProtocolError(f"Invalid RESP push kind: {kind!r}")
+        raise ElastiCacheIntegrationsProtocolError(f"Invalid RESP push kind: {kind!r}")
     return RespPush(kind=kind, items=items), pos
 
 
@@ -158,7 +158,7 @@ def _decode_map(data: RespBuffer, header: bytes, after_header: int) -> tuple[Res
     """Decode a ``%`` map into a ``dict``. Keys and values are each any RESP value."""
     count = _parse_int(header, "map length")
     if count < 0:
-        raise PhotonProtocolError(f"Malformed RESP map length: {header!r}")
+        raise ElastiCacheIntegrationsProtocolError(f"Malformed RESP map length: {header!r}")
     items: dict[RespValue, RespValue] = {}
     pos = after_header
     for _ in range(count):
@@ -167,7 +167,7 @@ def _decode_map(data: RespBuffer, header: bytes, after_header: int) -> tuple[Res
         try:
             items[key] = value
         except TypeError as exc:  # aggregate key: legal RESP3, unusable as a dict key
-            raise PhotonProtocolError(f"Unhashable RESP map key: {key!r}") from exc
+            raise ElastiCacheIntegrationsProtocolError(f"Unhashable RESP map key: {key!r}") from exc
     return items, pos
 
 
@@ -197,7 +197,7 @@ def decode_resp(data: RespBuffer, start: int = 0) -> tuple[RespValue, int]:
     Raises:
         IncompleteFrame: not an error — the frame is valid so far but the rest of its
             bytes have not arrived yet. Read more from the socket and call again.
-        PhotonProtocolError: the bytes can never form a valid frame; the stream is
+        ElastiCacheIntegrationsProtocolError: the bytes can never form a valid frame; the stream is
             corrupt and the connection should be closed.
     """
     header_end = data.find(_CRLF, start)
@@ -206,6 +206,6 @@ def decode_resp(data: RespBuffer, start: int = 0) -> tuple[RespValue, int]:
     prefix = bytes(data[start : start + 1])
     decoder = _DECODERS.get(prefix)
     if decoder is None:
-        raise PhotonProtocolError(f"Unsupported RESP prefix: {prefix!r}")
+        raise ElastiCacheIntegrationsProtocolError(f"Unsupported RESP prefix: {prefix!r}")
     header = bytes(data[start + 1 : header_end])
     return decoder(data, header, header_end + len(_CRLF))

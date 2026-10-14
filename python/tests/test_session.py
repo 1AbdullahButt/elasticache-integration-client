@@ -1,10 +1,10 @@
-"""Tests for photon.session.
+"""Tests for elasticache_integrations.session.
 
 The connector double comes from :func:`tests.mock.mock_connector` — a ``create_autospec`` bound to
-the real :class:`PhotonConnector`, so the session is verified against the real connector signatures
-without a network. Construction starts real :class:`~photon.refresh.Refresher` daemon
+the real :class:`ElastiCacheIntegrationsConnector`, so the session is verified against the real connector signatures
+without a network. Construction starts real :class:`~elasticache_integrations.refresh.Refresher` daemon
 thread (the connector is a mock, but the refresher is not), so any test that constructs a real
-``PhotonSession`` and reaches the refresher must call ``session.close()`` to avoid leaking it.
+``ElastiCacheIntegrationsSession`` and reaches the refresher must call ``session.close()`` to avoid leaking it.
 
 Command building/normalization details are protocol.py's contract and are covered in
 test_protocol.py; these tests assert only session behavior (lifecycle + delegation).
@@ -16,20 +16,24 @@ from unittest import mock
 
 import pytest
 
-from photon import session as session_module
-from photon.config_policy import ConfigPolicy
-from photon.exceptions import (
-    PhotonConfigError,
-    PhotonOverridesRejected,
-    PhotonConfigUnevaluable,
-    PhotonConnectionError,
-    PhotonError,
+from elasticache_integrations import session as session_module
+from elasticache_integrations.config_policy import ConfigPolicy
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsConfigError,
+    ElastiCacheIntegrationsOverridesRejected,
+    ElastiCacheIntegrationsConfigUnevaluable,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsError,
 )
-from photon.models import PhotonRequest, PhotonResponse, RequestMetadata
-from photon.reconnect_policy import ReconnectPolicy
-from photon.refresh import Refresher
-from photon.resp import RespError
-from photon.session import PhotonSession, parse_endpoint
+from elasticache_integrations.models import (
+    ElastiCacheIntegrationsRequest,
+    ElastiCacheIntegrationsResponse,
+    RequestMetadata,
+)
+from elasticache_integrations.reconnect_policy import ReconnectPolicy
+from elasticache_integrations.refresh import Refresher
+from elasticache_integrations.resp import RespError
+from elasticache_integrations.session import ElastiCacheIntegrationsSession, parse_endpoint
 from tests.mock import mock_connector
 
 # Short enough to read, long enough that only a deliberate advance reaches it.
@@ -39,7 +43,7 @@ STALENESS_WINDOW = 10
 class _FakeClock:
     """A monotonic clock the test moves by hand, to reach a deadline without waiting for it.
 
-    Substituted for the ``time`` module inside :mod:`photon.session`, which reads ``monotonic()``
+    Substituted for the ``time`` module inside :mod:`elasticache_integrations.session`, which reads ``monotonic()``
     to set the staleness deadline and to check it.
     """
 
@@ -65,9 +69,9 @@ def clock(monkeypatch):
     return fake
 
 
-def stale_session(connector) -> PhotonSession:
+def stale_session(connector) -> ElastiCacheIntegrationsSession:
     """A session whose config stops being trusted ``STALENESS_WINDOW`` seconds after a refresh."""
-    return PhotonSession(
+    return ElastiCacheIntegrationsSession(
         lambda: connector, config_policy=ConfigPolicy(staleness_duration=STALENESS_WINDOW)
     )
 
@@ -76,9 +80,9 @@ def stale_session(connector) -> PhotonSession:
 
 
 def test_connect_and_configure_order():
-    """Construction drives connect(), handshake(), then the photon.config exchange."""
+    """Construction drives connect(), handshake(), then the aws.config exchange."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector, overrides={"flag": True})
+    session = ElastiCacheIntegrationsSession(lambda: connector, overrides={"flag": True})
     session.close()
     assert [c[0] for c in connector.method_calls][:3] == [
         "connect",
@@ -86,14 +90,16 @@ def test_connect_and_configure_order():
         "execute",
     ]
     connector.execute.assert_called_once_with(
-        "photon.config", b'{"flag":true}', timeout=connector.config_timeout
+        "aws.config",
+        b'{"version":"1.0","flag":true}',
+        timeout=connector.config_timeout,
     )
 
 
 def test_resolved_config_stored_on_construction():
     """The resolved config is stored by the time construction returns."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     assert session._config is not None
     assert session._config.version == "1.0"
     assert session._config.refresh_interval == 60
@@ -105,20 +111,24 @@ def test_a_failed_configure_closes_everything(failing_step):
     """If any configure step after connect() raises, construction closes the connector
     (no leaked connection) and the session object never exists."""
     connector = mock_connector()
-    getattr(connector, failing_step).side_effect = PhotonError(f"{failing_step} failed")
+    getattr(connector, failing_step).side_effect = ElastiCacheIntegrationsError(
+        f"{failing_step} failed"
+    )
     # One attempt, so the assertion is about closing rather than about how often we retry.
-    with pytest.raises(PhotonError):
-        PhotonSession(lambda: connector, policy=ReconnectPolicy(connect_attempts=1))
+    with pytest.raises(ElastiCacheIntegrationsError):
+        ElastiCacheIntegrationsSession(
+            lambda: connector, policy=ReconnectPolicy(connect_attempts=1)
+        )
     connector.close.assert_called_once_with()
 
 
 def test_failed_initialization_releases_owned_resource():
     connector = mock_connector()
-    connector.handshake.side_effect = PhotonConnectionError("rejected")
+    connector.handshake.side_effect = ElastiCacheIntegrationsConnectionError("rejected")
     close_callback = mock.Mock()
 
-    with pytest.raises(PhotonConnectionError, match="rejected"):
-        PhotonSession(
+    with pytest.raises(ElastiCacheIntegrationsConnectionError, match="rejected"):
+        ElastiCacheIntegrationsSession(
             lambda: connector,
             policy=ReconnectPolicy(connect_attempts=1),
             close_callback=close_callback,
@@ -129,14 +139,18 @@ def test_failed_initialization_releases_owned_resource():
 
 def test_failed_initialization_logs_cleanup_failure_without_masking_cause(caplog):
     connector = mock_connector()
-    connector.handshake.side_effect = PhotonConnectionError("bring-up rejected")
+    connector.handshake.side_effect = ElastiCacheIntegrationsConnectionError("bring-up rejected")
 
     with (
-        mock.patch.object(PhotonSession, "close", side_effect=RuntimeError("cleanup failed")),
-        caplog.at_level("WARNING", logger="photon.session"),
+        mock.patch.object(
+            ElastiCacheIntegrationsSession, "close", side_effect=RuntimeError("cleanup failed")
+        ),
+        caplog.at_level("WARNING", logger="elasticache_integrations.session"),
     ):
-        with pytest.raises(PhotonConnectionError, match="bring-up rejected"):
-            PhotonSession(lambda: connector, policy=ReconnectPolicy(connect_attempts=1))
+        with pytest.raises(ElastiCacheIntegrationsConnectionError, match="bring-up rejected"):
+            ElastiCacheIntegrationsSession(
+                lambda: connector, policy=ReconnectPolicy(connect_attempts=1)
+            )
 
     assert "cleanup failed during initialization" in caplog.text
 
@@ -144,7 +158,7 @@ def test_failed_initialization_logs_cleanup_failure_without_masking_cause(caplog
 def test_policy_none_uses_the_default_policy():
     """Passing ``policy=None`` explicitly behaves like omitting it."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector, policy=None)
+    session = ElastiCacheIntegrationsSession(lambda: connector, policy=None)
     assert session.is_open
     session.close()
 
@@ -155,7 +169,7 @@ def test_policy_none_uses_the_default_policy():
 def test_construction_starts_refresher():
     """Construction starts a live refresher thread; close() stops it."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     assert session._config_refresher
     assert session._config_refresher._thread.is_alive()
     session.close()
@@ -172,11 +186,11 @@ def test_close_stops_refresher_before_closing_connector(monkeypatch):
             calls.append("runner.stop")
             super().stop(timeout=timeout)
 
-    monkeypatch.setattr("photon.session.Refresher", _SpyRunner)
+    monkeypatch.setattr("elasticache_integrations.session.Refresher", _SpyRunner)
 
     connector = mock_connector()
     connector.close.side_effect = lambda: calls.append("connector.close")
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     session.close()
     # Both runners stop before the connector closes, and the connector closes last.
     assert calls[-1] == "connector.close"
@@ -195,7 +209,7 @@ def test_a_failed_refresher_closes_everything(failing_step, monkeypatch):
     monkeypatch.setattr(Refresher, failing_step, fail)
     connector = mock_connector()
     with pytest.raises(RuntimeError):
-        PhotonSession(lambda: connector)
+        ElastiCacheIntegrationsSession(lambda: connector)
     connector.close.assert_called_once_with()
 
 
@@ -203,13 +217,13 @@ def test_a_failed_refresher_closes_everything(failing_step, monkeypatch):
 
 
 def test_refresh_once_sends_the_no_argument_form():
-    """A refresh tick sends photon.config with no argument: the connection was configured with
+    """A refresh tick sends aws.config with no argument: the connection was configured with
     the current overrides before it was published, so the server already has them."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector, overrides={"flag": True})
+    session = ElastiCacheIntegrationsSession(lambda: connector, overrides={"flag": True})
     connector.execute.reset_mock()  # discard the configure call
     session._refresh_once()
-    connector.execute.assert_called_once_with("photon.config", timeout=connector.config_timeout)
+    connector.execute.assert_called_once_with("aws.config", timeout=connector.config_timeout)
     session.close()
 
 
@@ -217,7 +231,7 @@ def test_refresh_once_null_reply_leaves_config_and_predicates_unchanged():
     """A RESP3 null reply (decoded to None) means the server's config is unchanged too: no swap,
     no reschedule."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     original_config = session._config
     session._config_refresher.set_interval = lambda interval: pytest.fail(
         "must not reschedule on a null reply"
@@ -231,7 +245,7 @@ def test_refresh_once_applies_a_server_initiated_change():
     """A resolved-config reply to a no-argument tick is installed and reschedules the loop: the
     branch is driven by the reply received, not by what was sent."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     connector.execute.side_effect = None
     connector.execute.return_value = json.dumps(
         {"version": "1.0", "refresh_interval": 45, "predicates": []}
@@ -246,7 +260,7 @@ def test_refresh_once_does_nothing_while_no_connection_is_available():
     """A tick landing mid-reconnect sends nothing and keeps the current config, since whichever
     connection comes back resolves its own config as it is configured."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     original_config = session._config
     session._connection_manager._connector = None
     connector.execute.reset_mock()
@@ -260,7 +274,7 @@ def test_configuring_a_connection_reschedules_the_refresher():
     """Configuring a connection installs its config the same way a refresh does, so a reconnect
     that resolves a new interval reschedules the loop."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     reconnected = mock_connector()
     reconnected.execute.side_effect = None
     reconnected.execute.return_value = json.dumps(
@@ -272,12 +286,12 @@ def test_configuring_a_connection_reschedules_the_refresher():
 
 
 def test_refresh_once_swallows_connector_error_and_keeps_current_config():
-    """A PhotonError from execute() must not escape _refresh_once: it would propagate out of the
+    """A ElastiCacheIntegrationsError from execute() must not escape _refresh_once: it would propagate out of the
     refresher loop and silently kill the thread, stopping every future refresh."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     original_config = session._config
-    connector.execute.side_effect = PhotonError("connection lost")
+    connector.execute.side_effect = ElastiCacheIntegrationsError("connection lost")
     session._refresh_once()  # must not raise
     assert session._config is original_config
     session.close()
@@ -287,7 +301,7 @@ def test_refresh_once_swallows_malformed_reply_and_keeps_current_config():
     """A reply that fails to parse leaves the last known good config installed — _replace_config
     is never reached, so no code is needed to retain it."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     original_config = session._config
     connector.execute.side_effect = None
     connector.execute.return_value = b'{"version":"1.0"}'  # no refresh_interval: malformed
@@ -301,12 +315,12 @@ def test_refresh_once_config_invalid_alarms_at_once_without_dropping(caplog):
     the caching behavior rides the staleness window like any failing refresh; only the alarm is
     immediate."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     connector.execute.reset_mock()  # discard the configure call
-    connector.execute.side_effect = PhotonOverridesRejected(
-        "photon.config rejected: CONFIG_INVALID"
+    connector.execute.side_effect = ElastiCacheIntegrationsOverridesRejected(
+        "aws.config rejected: CONFIG_INVALID"
     )
-    with caplog.at_level("ERROR", logger="photon.session"):
+    with caplog.at_level("ERROR", logger="elasticache_integrations.session"):
         session._refresh_once()  # must not raise
     connector.close.assert_not_called()
     assert any(r.levelname == "ERROR" for r in caplog.records)
@@ -318,7 +332,7 @@ def test_refresh_once_unevaluable_config_alarms_at_once_without_dropping(caplog)
     it alarms but keeps the last good config until the window drops the connection — it does not
     cache by the entries that did compile, and it does not drop immediately."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     original_config = session._config
     connector.execute.reset_mock()  # discard the configure call
     connector.execute.side_effect = None
@@ -329,7 +343,7 @@ def test_refresh_once_unevaluable_config_alarms_at_once_without_dropping(caplog)
             "predicates": [{"expr": "this is not (valid CEL", "vars": {}}],
         }
     ).encode()
-    with caplog.at_level("ERROR", logger="photon.session"):
+    with caplog.at_level("ERROR", logger="elasticache_integrations.session"):
         session._refresh_once()  # must not raise
     connector.close.assert_not_called()
     assert session._config is original_config  # untrusted config was not installed
@@ -342,7 +356,7 @@ def test_refresh_once_unevaluable_config_alarms_at_once_without_dropping(caplog)
     [
         (
             RespError("CONFIG_INVALID", "table does not exist"),
-            PhotonOverridesRejected,
+            ElastiCacheIntegrationsOverridesRejected,
             "CONFIG_INVALID",
         ),
         (
@@ -353,7 +367,7 @@ def test_refresh_once_unevaluable_config_alarms_at_once_without_dropping(caplog)
                     "predicates": [{"expr": "this is not (valid CEL", "vars": {}}],
                 }
             ).encode(),
-            PhotonConfigUnevaluable,
+            ElastiCacheIntegrationsConfigUnevaluable,
             "cannot evaluate",
         ),
     ],
@@ -363,9 +377,9 @@ def test_configuring_a_connection_alarms_a_config_failure_on_every_attempt(
 ):
     """A config failure that cannot fix itself is logged at ERROR each time a connection is
     configured. It still fails the attempt, so the connection is closed and retried."""
-    session = PhotonSession(lambda: mock_connector())
+    session = ElastiCacheIntegrationsSession(lambda: mock_connector())
     config = session._config
-    with caplog.at_level("ERROR", logger="photon.session"):
+    with caplog.at_level("ERROR", logger="elasticache_integrations.session"):
         for _ in range(2):
             connector = mock_connector()
             connector.execute.side_effect = None
@@ -383,7 +397,7 @@ def test_a_config_invalid_refresh_still_reaches_the_staleness_window(clock, capl
     connection is dropped once the window elapses — the shared stale-config degradation path."""
     connector = mock_connector()
     session = stale_session(connector)
-    connector.execute.side_effect = PhotonOverridesRejected("rejected")
+    connector.execute.side_effect = ElastiCacheIntegrationsOverridesRejected("rejected")
 
     clock.advance(STALENESS_WINDOW - 1)
     session._refresh_once()  # alarms, does not confirm the config, does not drop
@@ -392,7 +406,7 @@ def test_a_config_invalid_refresh_still_reaches_the_staleness_window(clock, capl
 
     clock.advance(1)
     connector.execute.reset_mock()
-    with caplog.at_level("WARNING", logger="photon.session"):
+    with caplog.at_level("WARNING", logger="elasticache_integrations.session"):
         session._refresh_once()  # now past the window: the shared path drops the connection
     connector.close.assert_called_once_with()
     assert "dropping the connection" in caplog.text
@@ -402,13 +416,13 @@ def test_a_config_invalid_refresh_still_reaches_the_staleness_window(clock, capl
 def test_predicates_swap_is_visible_to_the_next_request():
     """A predicate recompiled by _replace_config takes effect on the very next request() call."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     # A config with no predicates at all: every request must now pass through (None).
     empty_config = {"version": "1.0", "refresh_interval": 60, "predicates": []}
     connector.execute.side_effect = None
     connector.execute.return_value = json.dumps(empty_config).encode()
     session._refresh_once()
-    request = PhotonRequest(
+    request = ElastiCacheIntegrationsRequest(
         method="POST",
         url="https://dynamodb.us-east-1.amazonaws.com/",
         metadata=RequestMetadata(service="dynamodb", operation="GetItem"),
@@ -455,7 +469,7 @@ def test_a_failing_refresh_past_the_window_drops_the_connection(clock, caplog):
     connector.execute.return_value = json.dumps({"version": "1.0"}).encode()  # no refresh_interval
     clock.advance(STALENESS_WINDOW)
 
-    with caplog.at_level("WARNING", logger="photon.session"):
+    with caplog.at_level("WARNING", logger="elasticache_integrations.session"):
         session._refresh_once()
 
     connector.close.assert_called_once_with()
@@ -471,7 +485,7 @@ def test_a_failure_from_a_replaced_connector_leaves_the_replacement(clock):
 
     def _replaced_then_failed(command, *args, timeout=None):
         session._connection_manager._connector = replacement
-        raise PhotonError("malformed")
+        raise ElastiCacheIntegrationsError("malformed")
 
     connector.execute.side_effect = _replaced_then_failed
     clock.advance(STALENESS_WINDOW)
@@ -534,7 +548,7 @@ def test_a_failed_refresh_does_not_restart_the_window(clock):
     successive failures reach it."""
     connector = mock_connector()
     session = stale_session(connector)
-    connector.execute.side_effect = PhotonError("connection lost")
+    connector.execute.side_effect = ElastiCacheIntegrationsError("connection lost")
 
     clock.advance(STALENESS_WINDOW - 1)
     session._refresh_once()
@@ -621,12 +635,12 @@ def test_a_null_reply_from_a_closed_connection_does_not_restart_the_window(clock
 def test_configuring_a_connection_that_closes_before_its_install_fails():
     """A connection that closes between its config reply and the install fails its configure,
     leaving the config already in force: a late install from an abandoned attempt is refused."""
-    session = PhotonSession(lambda: mock_connector())
+    session = ElastiCacheIntegrationsSession(lambda: mock_connector())
     config = session._config
     late = mock_connector()
     late.execute.side_effect = _closes_before_install(late, _config_reply(45))
 
-    with pytest.raises(PhotonConnectionError):
+    with pytest.raises(ElastiCacheIntegrationsConnectionError):
         session._configure(late)
 
     assert session._config is config
@@ -644,7 +658,7 @@ def test_a_first_attempt_that_closes_before_its_install_is_retried():
     second.execute.return_value = _config_reply(45)
     connectors = iter([first, second])
 
-    session = PhotonSession(
+    session = ElastiCacheIntegrationsSession(
         lambda: next(connectors),
         policy=ReconnectPolicy(connect_attempts=2, base_delay=0.001, max_delay=0.001),
     )
@@ -659,11 +673,11 @@ def test_a_first_attempt_that_closes_before_its_install_is_retried():
 
 
 def test_request_delegates_to_connector():
-    """request() serializes the photon.request command, forwards it to execute(), and returns
+    """request() serializes the aws.request command, forwards it to execute(), and returns
     the parsed response."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
-    request = PhotonRequest(
+    session = ElastiCacheIntegrationsSession(lambda: connector)
+    request = ElastiCacheIntegrationsRequest(
         method="POST",
         url="https://dynamodb.us-east-1.amazonaws.com/",
         headers={"Content-Type": "application/x-amz-json-1.0"},
@@ -671,10 +685,10 @@ def test_request_delegates_to_connector():
         metadata=RequestMetadata(service="dynamodb", operation="GetItem"),
     )
     resp = session.request(request)
-    assert isinstance(resp, PhotonResponse)
+    assert isinstance(resp, ElastiCacheIntegrationsResponse)
     assert resp.status_code == 200
     args, kwargs = connector.execute.call_args
-    assert args[0] == "photon.request"
+    assert args[0] == "aws.request"
     assert len(args[1:]) == 5  # [method, url, headers, body, metadata]
     assert kwargs == {}
     session.close()
@@ -682,13 +696,13 @@ def test_request_delegates_to_connector():
 
 def test_auth_error_invalidates_connection_and_passes_request_through():
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     connector.execute.side_effect = None
     connector.execute.return_value = RespError("AUTH_ERROR", "missing FAS")
     session._connection_manager.invalidate_connection = mock.Mock()
 
     response = session.request(
-        PhotonRequest(
+        ElastiCacheIntegrationsRequest(
             method="POST",
             url="https://dynamodb.us-east-1.amazonaws.com/",
             metadata=RequestMetadata(service="dynamodb", operation="UpdateItem"),
@@ -702,12 +716,12 @@ def test_auth_error_invalidates_connection_and_passes_request_through():
 
 def test_request_after_close_is_rejected_before_connector_use():
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     session.close()
     connector.execute.reset_mock()  # discard the constructor's config call
-    with pytest.raises(PhotonError):
+    with pytest.raises(ElastiCacheIntegrationsError):
         session.request(
-            PhotonRequest(
+            ElastiCacheIntegrationsRequest(
                 method="POST",
                 url="https://x/",
                 metadata=RequestMetadata(service="dynamodb", operation="GetItem"),
@@ -722,7 +736,7 @@ def test_request_after_close_is_rejected_before_connector_use():
 def test_close_delegates_to_connector():
     """close() delegates to the connector; the connector's own close() is idempotent."""
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     session.close()
     session.close()
     assert connector.close.call_count == 2  # session adds no state; connector handles idempotence
@@ -731,7 +745,7 @@ def test_close_delegates_to_connector():
 def test_close_releases_owned_resource_once():
     connector = mock_connector()
     close_callback = mock.Mock()
-    session = PhotonSession(lambda: connector, close_callback=close_callback)
+    session = ElastiCacheIntegrationsSession(lambda: connector, close_callback=close_callback)
 
     session.close()
     session.close()
@@ -742,7 +756,7 @@ def test_close_releases_owned_resource_once():
 def test_close_releases_owned_resource_when_a_refresher_stop_fails():
     connector = mock_connector()
     close_callback = mock.Mock()
-    session = PhotonSession(lambda: connector, close_callback=close_callback)
+    session = ElastiCacheIntegrationsSession(lambda: connector, close_callback=close_callback)
     reauth_runner = session._reauth_runner
     assert reauth_runner is not None
     reauth_runner.stop()
@@ -760,7 +774,7 @@ def test_close_releases_owned_resource_when_a_refresher_stop_fails():
 
 def test_is_open_tracks_lifecycle():
     connector = mock_connector()
-    session = PhotonSession(lambda: connector)
+    session = ElastiCacheIntegrationsSession(lambda: connector)
     assert session.is_open
     session.close()
     assert not session.is_open
@@ -788,5 +802,5 @@ def test_parse_endpoint_valid(endpoint, expected):
 )
 def test_parse_endpoint_invalid(bad):
     """Malformed endpoints (empty, no port, empty port, empty host, port 0, port > 65535, non-numeric port) are rejected."""
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         parse_endpoint(bad)

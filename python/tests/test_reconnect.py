@@ -1,6 +1,6 @@
 """Tests for reconnect, fallback, and client-initiated connection replacement.
 
-Behavioral tests use a real :class:`PhotonConnector` and :class:`MockCache`
+Behavioral tests use a real :class:`ElastiCacheIntegrationsConnector` and :class:`MockCache`
 through a :class:`MockTcpProxy`, which can break connections with no request in
 flight. Tests that only exercise the session state machine use an autospec
 connector double.
@@ -15,21 +15,25 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from photon import connection_manager
-from photon import session as session_module
-from photon.config_policy import ConfigPolicy
-from photon.connection import PhotonConnector
-from photon.connection_manager import ConnectionState
-from photon.exceptions import (
-    PhotonCacheUnavailable,
-    PhotonConfigError,
-    PhotonConnectionError,
-    PhotonConnectionLost,
-    PhotonError,
+from elasticache_integrations import connection_manager
+from elasticache_integrations import session as session_module
+from elasticache_integrations.config_policy import ConfigPolicy
+from elasticache_integrations.connection import ElastiCacheIntegrationsConnector
+from elasticache_integrations.connection_manager import ConnectionState
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsCacheUnavailable,
+    ElastiCacheIntegrationsConfigError,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsConnectionLost,
+    ElastiCacheIntegrationsError,
 )
-from photon.models import PhotonRequest, PhotonResponse, RequestMetadata
-from photon.reconnect_policy import ReconnectPolicy
-from photon.session import PhotonSession
+from elasticache_integrations.models import (
+    ElastiCacheIntegrationsRequest,
+    ElastiCacheIntegrationsResponse,
+    RequestMetadata,
+)
+from elasticache_integrations.reconnect_policy import ReconnectPolicy
+from elasticache_integrations.session import ElastiCacheIntegrationsSession
 from tests.mock import (
     DEFAULT_RESOLVED_CONFIG,
     MockCache,
@@ -58,9 +62,9 @@ def test_invalidate_connection_enters_reconnecting_before_close():
     connector.close.assert_called_once_with()
 
 
-def get_item_request(body: bytes = b'{"TableName": "widgets"}') -> PhotonRequest:
+def get_item_request(body: bytes = b'{"TableName": "widgets"}') -> ElastiCacheIntegrationsRequest:
     """A DynamoDB GetItem — the canonical request every config in this file routes to the cache."""
-    return PhotonRequest(
+    return ElastiCacheIntegrationsRequest(
         method="POST",
         url="https://dynamodb.us-east-1.amazonaws.com/",
         headers={"content-type": "application/x-amz-json-1.0"},
@@ -72,7 +76,7 @@ def get_item_request(body: bytes = b'{"TableName": "widgets"}') -> PhotonRequest
 class _FakeClock:
     """A monotonic clock the test moves by hand, to reach a deadline without waiting for it.
 
-    Substituted for the ``time`` module inside :mod:`photon.connection_manager`, which reads
+    Substituted for the ``time`` module inside :mod:`elasticache_integrations.connection_manager`, which reads
     ``monotonic()`` to open the fallback window and to check it. ``sleep`` stays real: the reconnect
     loop still has to back off.
     """
@@ -96,7 +100,7 @@ class _RealConnectors:
 
     ``built`` is what lets a test assert on connections the session owns privately — how many were
     attempted, and whether they were closed. Extra keyword arguments go to each
-    :class:`PhotonConnector`, e.g. a long ``config_timeout`` to keep a handshake from timing out on
+    :class:`ElastiCacheIntegrationsConnector`, e.g. a long ``config_timeout`` to keep a handshake from timing out on
     its own.
     """
 
@@ -104,10 +108,10 @@ class _RealConnectors:
         self._host = host
         self._port = port
         self._connector_kwargs = connector_kwargs
-        self.built: list[PhotonConnector] = []
+        self.built: list[ElastiCacheIntegrationsConnector] = []
 
-    def __call__(self) -> PhotonConnector:
-        connector = PhotonConnector(
+    def __call__(self) -> ElastiCacheIntegrationsConnector:
+        connector = ElastiCacheIntegrationsConnector(
             self._host,
             self._port,
             tls=False,
@@ -136,7 +140,7 @@ def wait_for(predicate, timeout: float = _STATE_TIMEOUT, describe=None) -> None:
 
 
 def wait_for_state(
-    session: PhotonSession, state: ConnectionState, timeout: float = _STATE_TIMEOUT
+    session: ElastiCacheIntegrationsSession, state: ConnectionState, timeout: float = _STATE_TIMEOUT
 ) -> None:
     """Wait until the session reaches ``state``.
 
@@ -209,9 +213,9 @@ class _ReconnectRig:
             self.auth_count += 1
             return "test-user", f"token-{self.auth_count}"
 
-        def factory() -> PhotonConnector:
+        def factory() -> ElastiCacheIntegrationsConnector:
             self.connector_count += 1
-            return PhotonConnector(
+            return ElastiCacheIntegrationsConnector(
                 self.proxy.host,
                 self.proxy.port,
                 tls=False,
@@ -220,7 +224,7 @@ class _ReconnectRig:
             )
 
         self.factory = factory
-        self.session = PhotonSession(
+        self.session = ElastiCacheIntegrationsSession(
             factory,
             overrides=overrides,
             policy=policy,
@@ -261,7 +265,7 @@ def test_reconnect_after_drop_serves_next_request(rig):
     wait_for_reconnect(r, connection_id=2)
 
     response = r.session.request(get_item_request())
-    assert isinstance(response, PhotonResponse)
+    assert isinstance(response, ElastiCacheIntegrationsResponse)
     assert response.status_code == 200
 
 
@@ -269,14 +273,14 @@ def test_reconnect_resolves_fresh_credentials_and_repeats_the_handshake(rig):
     """A reconnect creates a new connector with fresh credentials and configuration."""
     r = rig()
     assert (r.connector_count, r.auth_count) == (1, 1)
-    assert r.cache.photon_command_log.count("photon.config") == 1
+    assert r.cache.cache_command_log.count("aws.config") == 1
 
     r.proxy.disconnect_clients()
     wait_for_reconnect(r, connection_id=2)
 
     assert r.auth_count == 2
-    assert r.cache.photon_command_log.count("hello") == 2
-    assert r.cache.photon_command_log.count("photon.config") == 2
+    assert r.cache.cache_command_log.count("hello") == 2
+    assert r.cache.cache_command_log.count("aws.config") == 2
 
 
 def test_reconnect_is_single_flight_under_concurrent_failures(rig):
@@ -293,7 +297,7 @@ def test_reconnect_is_single_flight_under_concurrent_failures(rig):
         # Some of these raise (they found the dead connector) and some return None (they arrived
         # after it was retired). Both are correct; the assertion is about connection count.
         futures = [
-            pool.submit(_swallow_photon_error, r.session, get_item_request()) for _ in range(8)
+            pool.submit(_swallow_cache_error, r.session, get_item_request()) for _ in range(8)
         ]
         for future in futures:
             future.result(timeout=_STATE_TIMEOUT)
@@ -303,22 +307,24 @@ def test_reconnect_is_single_flight_under_concurrent_failures(rig):
     assert r.proxy.accepted_connections == 2
 
 
-def _swallow_photon_error(session: PhotonSession, request: PhotonRequest):
+def _swallow_cache_error(
+    session: ElastiCacheIntegrationsSession, request: ElastiCacheIntegrationsRequest
+):
     try:
         return session.request(request)
-    except (PhotonError, PhotonCacheUnavailable):
+    except (ElastiCacheIntegrationsError, ElastiCacheIntegrationsCacheUnavailable):
         pass
 
 
-def test_non_photon_error_during_reconnect_is_retried(rig):
-    """A failed reconnect attempt is retried even when setup raises a non-Photon exception.
+def test_non_elasticache_integrations_error_during_reconnect_is_retried(rig):
+    """A failed reconnect attempt is retried even when setup raises a non-ElastiCacheIntegrations exception.
 
     Reconnect must not strand the session because of an unexpected setup error.
     """
     r = rig()
     config_before, predicates_before = r.session._config, r.session._predicates
-    # From here the cache answers with a config Photon cannot use: 2**200 overflows what CEL can
-    # hold, so compile_predicates raises ValueError — a non-Photon error, mid-connection.
+    # From here the cache answers with a config ElastiCacheIntegrations cannot use: 2**200 overflows what CEL can
+    # hold, so compile_predicates raises ValueError — a non-ElastiCacheIntegrations error, mid-connection.
     r.cache.set_config({"version": "1.0", "predicates": [{"expr": "true", "vars": {"n": 2**200}}]})
     r.proxy.disconnect_clients()
 
@@ -419,7 +425,7 @@ def test_an_in_flight_request_raises_and_is_never_replayed(rig):
     """A request whose connection dies under it raises, and is not retried on the replacement.
 
     The connection is healthy when the request goes out — the cache drops it instead of replying — so
-    the request was sent and its fate is unknown. Photon neither falls back to the origin (which
+    the request was sent and its fate is unknown. ElastiCacheIntegrations neither falls back to the origin (which
     could apply it twice) nor replays it onto the new connection, even though the fallback window is
     wide open; it raises and lets the SDK decide.
 
@@ -429,7 +435,7 @@ def test_an_in_flight_request_raises_and_is_never_replayed(rig):
     """
     r = rig(failure="drop")  # the cache drops the connection instead of replying
 
-    with pytest.raises(PhotonConnectionLost):
+    with pytest.raises(ElastiCacheIntegrationsConnectionLost):
         r.session.request(get_item_request(b'{"TableName": "widgets", "marker": 1}'))
 
     wait_for_reconnect(r, connection_id=2)
@@ -469,7 +475,7 @@ def test_finite_window_passes_through_then_escalates(rig, monkeypatch):
     assert not r.session.request(get_item_request())  # inside the window
 
     clock.advance(1)  # exactly onto the deadline, which is already outside the window
-    with pytest.raises(PhotonCacheUnavailable):
+    with pytest.raises(ElastiCacheIntegrationsCacheUnavailable):
         r.session.request(get_item_request())
 
 
@@ -487,7 +493,7 @@ def test_zero_window_escalates_until_reconnected(rig):
     )
     set_as_reconnecting(r)
 
-    with pytest.raises(PhotonCacheUnavailable):
+    with pytest.raises(ElastiCacheIntegrationsCacheUnavailable):
         r.session.request(get_item_request())
 
     r.proxy.allow_connections()
@@ -512,7 +518,7 @@ def test_reconnect_probes_indefinitely(rig):
 def test_a_declined_request_does_not_escalate_during_an_outage(rig):
     """A request no predicate matches passes through even while the cache is unreachable.
 
-    Escalation is for requests Photon would have served. One it declines is not Photon's to fail, so
+    Escalation is for requests ElastiCacheIntegrations would have served. One it declines is not ElastiCacheIntegrations's to fail, so
     the strictest possible window — ``fallback_duration=0`` — still lets it through to the origin.
     """
     r = rig(
@@ -571,27 +577,27 @@ def test_every_delay_is_jittered_including_the_repeated_tail():
 
 def test_policy_rejects_incoherent_settings():
     """Invalid policy settings are rejected at construction."""
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(base_delay=0)
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(base_delay=1.0, max_delay=0.5)
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(jitter=1.0)
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(connection_timeout=0)
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(fallback_duration="60")
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(fallback_duration=True)
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ReconnectPolicy(fallback_duration=0.5)
 
 
 def test_a_misconfigured_policy_is_catchable_either_way():
-    """A configuration mistake answers to Python's name for it and to Photon's."""
+    """A configuration mistake answers to Python's name for it and to ElastiCacheIntegrations's."""
     with pytest.raises(ValueError):
         ReconnectPolicy(jitter=1.0)
-    with pytest.raises(PhotonError):
+    with pytest.raises(ElastiCacheIntegrationsError):
         ReconnectPolicy(jitter=1.0)
 
 
@@ -645,13 +651,13 @@ def test_close_interrupts_a_connection_being_opened():
     cache.start()
     proxy = MockTcpProxy(cache.host, cache.port)
     try:
-        session = PhotonSession(
+        session = ElastiCacheIntegrationsSession(
             _RealConnectors(proxy.host, proxy.port, config_timeout=30.0), policy=_fast()
         )
         cache.failure, cache.failure_command = "hang", "hello"
         proxy.disconnect_clients()
         # The reconnect is now inside the handshake the cache will never answer.
-        wait_for(lambda: cache.photon_command_log.count("hello") >= 2)
+        wait_for(lambda: cache.cache_command_log.count("hello") >= 2)
 
         started = time.monotonic()
         session.close()
@@ -660,9 +666,9 @@ def test_close_interrupts_a_connection_being_opened():
         proxy.stop()
         cache.stop()
 
-    assert not [t for t in threading.enumerate() if t.name == "photon-reconnect"], (
-        "close() returned with the reconnect thread still in the handshake"
-    )
+    assert not [
+        t for t in threading.enumerate() if t.name == "elasticache-integrations-reconnect"
+    ], "close() returned with the reconnect thread still in the handshake"
     assert elapsed < 1.0, f"close() waited out the stalled handshake: {elapsed:.2f}s"
 
 
@@ -673,10 +679,14 @@ def test_init_still_fails_loudly():
     """
     # A double, so the failure is a rejected handshake specifically, and so `close` can be counted.
     connector = mock_connector()
-    connector.handshake.side_effect = PhotonConnectionError("HELLO 3 rejected: WRONGPASS")
+    connector.handshake.side_effect = ElastiCacheIntegrationsConnectionError(
+        "HELLO 3 rejected: WRONGPASS"
+    )
 
-    with pytest.raises(PhotonConnectionError):
-        PhotonSession(lambda: connector, policy=ReconnectPolicy(connect_attempts=1))
+    with pytest.raises(ElastiCacheIntegrationsConnectionError):
+        ElastiCacheIntegrationsSession(
+            lambda: connector, policy=ReconnectPolicy(connect_attempts=1)
+        )
     connector.close.assert_called_once_with()
 
 
@@ -695,10 +705,10 @@ def test_creating_a_session_retries_before_giving_up():
         conn = mock_connector()
         built.append(conn)
         if len(built) < 3:
-            conn.handshake.side_effect = PhotonConnectionError("cache unreachable")
+            conn.handshake.side_effect = ElastiCacheIntegrationsConnectionError("cache unreachable")
         return conn
 
-    session = PhotonSession(factory, policy=_fast(connect_attempts=3))
+    session = ElastiCacheIntegrationsSession(factory, policy=_fast(connect_attempts=3))
     try:
         assert len(built) == 3
         assert session.state is ConnectionState.ALIVE
@@ -717,8 +727,8 @@ def test_creating_a_session_gives_up_after_connect_attempts():
     """
     connectors = _RealConnectors(*_unused_port())
 
-    with pytest.raises(PhotonConnectionError):
-        PhotonSession(connectors, policy=_fast(connect_attempts=2))
+    with pytest.raises(ElastiCacheIntegrationsConnectionError):
+        ElastiCacheIntegrationsSession(connectors, policy=_fast(connect_attempts=2))
 
     assert len(connectors.built) == 2
     assert not any(connector.is_alive for connector in connectors.built)
@@ -744,8 +754,10 @@ def test_connection_timeout_bounds_connect_and_configure():
     try:
         timeout = 0.3
         started = time.monotonic()
-        with pytest.raises(PhotonConnectionError):
-            PhotonSession(connectors, policy=_fast(connect_attempts=2, connection_timeout=timeout))
+        with pytest.raises(ElastiCacheIntegrationsConnectionError):
+            ElastiCacheIntegrationsSession(
+                connectors, policy=_fast(connect_attempts=2, connection_timeout=timeout)
+            )
         elapsed = time.monotonic() - started
 
         assert len(connectors.built) == 2
@@ -759,7 +771,11 @@ def test_connection_timeout_bounds_connect_and_configure():
         # after the teardown — or one waiting longer than that — passes without a closer behind it.
         assert not any(connector.is_alive for connector in connectors.built)
         wait_for(
-            lambda: not [t for t in threading.enumerate() if t.name == "photon-connect"],
+            lambda: (
+                not [
+                    t for t in threading.enumerate() if t.name == "elasticache-integrations-connect"
+                ]
+            ),
             timeout=1.0,
         )
     finally:

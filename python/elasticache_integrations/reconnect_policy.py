@@ -1,4 +1,4 @@
-"""Reconnect and fallback settings for a :class:`~photon.session.PhotonSession`."""
+"""Reconnect and fallback settings for a :class:`~elasticache_integrations.session.ElastiCacheIntegrationsSession`."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import math
 import random
 from dataclasses import dataclass
 
-from photon.exceptions import PhotonConfigError
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsConfigError
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -42,21 +42,23 @@ class ReconnectPolicy:
         if self.fallback_duration is not None and (
             isinstance(self.fallback_duration, bool) or not isinstance(self.fallback_duration, int)
         ):
-            raise PhotonConfigError("fallback_duration must be a whole number of seconds or None")
+            raise ElastiCacheIntegrationsConfigError(
+                "fallback_duration must be a whole number of seconds or None"
+            )
         if self.connect_attempts < 1:
-            raise PhotonConfigError("connect_attempts must be >= 1")
+            raise ElastiCacheIntegrationsConfigError("connect_attempts must be >= 1")
         if self.connection_timeout <= 0:
-            raise PhotonConfigError("connection_timeout must be > 0")
+            raise ElastiCacheIntegrationsConfigError("connection_timeout must be > 0")
         if self.auth_refresh_interval <= 0:
-            raise PhotonConfigError("auth_refresh_interval must be > 0")
+            raise ElastiCacheIntegrationsConfigError("auth_refresh_interval must be > 0")
         if self.request_wait < 0:
-            raise PhotonConfigError("request_wait must be >= 0")
+            raise ElastiCacheIntegrationsConfigError("request_wait must be >= 0")
         if self.base_delay <= 0:
-            raise PhotonConfigError("base_delay must be > 0")
+            raise ElastiCacheIntegrationsConfigError("base_delay must be > 0")
         if self.max_delay < self.base_delay:
-            raise PhotonConfigError("max_delay must be >= base_delay")
+            raise ElastiCacheIntegrationsConfigError("max_delay must be >= base_delay")
         if not (0 <= self.jitter < 1):
-            raise PhotonConfigError("jitter must be in [0, 1)")
+            raise ElastiCacheIntegrationsConfigError("jitter must be in [0, 1)")
 
     @property
     def fallback_window(self) -> float:

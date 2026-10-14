@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from photon.resp import RespError, decode_resp
+from elasticache_integrations.resp import RespError, decode_resp
 from tests.mock import MockCache, Reply, _read_command
 
-_REQUEST = [b"photon.request", b"POST", b"https://x/", b"hdrs", b"body", b"service=s&op=o"]
+_REQUEST = [b"aws.request", b"POST", b"https://x/", b"hdrs", b"body", b"service=s&op=o"]
 
 
 def test_read_command_rejects_missing_crlf_terminator():
@@ -32,27 +32,27 @@ def test_read_command_rejects_non_bulk_arg():
 
 
 def test_config_with_no_args_replies_null():
-    """A no-argument photon.config ('overrides unchanged') is valid: the default mock replies
+    """A no-argument aws.config ('overrides unchanged') is valid: the default mock replies
     with the RESP3 null (nothing changed), and records the tick as None in config_overrides."""
     cache = MockCache()
-    value, _ = decode_resp(cache.handle([b"photon.config"]))
+    value, _ = decode_resp(cache.handle([b"aws.config"]))
     assert value is None
     assert cache.config_overrides == [None]
 
 
 def test_config_with_no_args_can_reply_a_resolved_config():
-    """When no_arg_config_reply is set, a no-argument photon.config replies with it instead of
+    """When no_arg_config_reply is set, a no-argument aws.config replies with it instead of
     null — simulating the server changing its own settings independently of the client."""
     changed = {"version": "1.0", "refresh_interval": 30, "predicates": []}
     cache = MockCache(no_arg_config_reply=changed)
-    value, _ = decode_resp(cache.handle([b"photon.config"]))
+    value, _ = decode_resp(cache.handle([b"aws.config"]))
     assert json.loads(value) == changed
 
 
 def test_config_with_wrong_arg_count_is_rejected():
-    """photon.config with 2+ args is rejected by the mock with a CONFIG_INVALID error (0 args is
+    """aws.config with 2+ args is rejected by the mock with a CONFIG_INVALID error (0 args is
     the valid no-argument form; 1 arg is the valid explicit-overrides form)."""
-    value, _ = decode_resp(MockCache().handle([b"photon.config", b"{}", b"extra"]))
+    value, _ = decode_resp(MockCache().handle([b"aws.config", b"{}", b"extra"]))
     assert isinstance(value, RespError)
     assert value.code == "CONFIG_INVALID"
 
@@ -60,22 +60,22 @@ def test_config_with_wrong_arg_count_is_rejected():
 def test_config_with_invalid_overrides_is_rejected():
     """The overrides arg must be a JSON object; malformed JSON or a non-object is CONFIG_INVALID."""
     for bad in (b"not-json", b'["a-list"]', b"\xff"):
-        value, _ = decode_resp(MockCache().handle([b"photon.config", bad]))
+        value, _ = decode_resp(MockCache().handle([b"aws.config", bad]))
         assert isinstance(value, RespError)
         assert value.code == "CONFIG_INVALID"
 
 
 def test_config_overrides_are_recorded():
-    """Each photon.config's decoded overrides are recorded, in order, for assertions."""
+    """Each aws.config's decoded overrides are recorded, in order, for assertions."""
     cache = MockCache()
-    cache.handle([b"photon.config", b'{"ttl": 300}'])
-    cache.handle([b"photon.config", b"{}"])
+    cache.handle([b"aws.config", b'{"ttl": 300}'])
+    cache.handle([b"aws.config", b"{}"])
     assert cache.config_overrides == [{"ttl": 300}, {}]
 
 
 def test_request_with_wrong_arg_count_is_rejected():
-    """photon.request without exactly 5 args (method, url, headers, body, metadata) is rejected."""
-    value, _ = decode_resp(MockCache().handle([b"photon.request", b"POST"]))
+    """aws.request without exactly 5 args (method, url, headers, body, metadata) is rejected."""
+    value, _ = decode_resp(MockCache().handle([b"aws.request", b"POST"]))
     assert isinstance(value, RespError)
     assert value.code == "PARSE_ERROR"
 
@@ -98,8 +98,8 @@ def test_request_metadata_is_decoded_onto_the_record():
 
 
 def test_push_response_builds_both_halves_of_a_deferred_exchange():
-    """Reply.push_response is the id reply followed by the photon.response push for that id."""
+    """Reply.push_response is the id reply followed by the aws.response push for that id."""
     reply = Reply.ok(body=b"body")
     assert Reply.push_response(42, reply).frame == (
-        b"+42\r\n>3\r\n$15\r\nphoton.response\r\n$2\r\n42\r\n" + reply.frame
+        b"+42\r\n>3\r\n$12\r\naws.response\r\n$2\r\n42\r\n" + reply.frame
     )

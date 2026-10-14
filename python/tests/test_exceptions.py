@@ -1,67 +1,73 @@
-"""Tests for photon.exceptions — the connector error taxonomy."""
+"""Tests for elasticache_integrations.exceptions — the connector error taxonomy."""
 
 import pytest
 
 from botocore.exceptions import ConnectionClosedError
 
-from photon.exceptions import (
-    PhotonAuthError,
-    PhotonCacheUnavailable,
-    PhotonConfigError,
-    PhotonOverridesRejected,
-    PhotonConfigUnevaluable,
-    PhotonConnectionLost,
-    PhotonConnectionError,
-    PhotonError,
-    PhotonOriginError,
-    PhotonProtocolError,
-    PhotonRejectedError,
-    PhotonTimeoutError,
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsAuthError,
+    ElastiCacheIntegrationsCacheUnavailable,
+    ElastiCacheIntegrationsConfigError,
+    ElastiCacheIntegrationsOverridesRejected,
+    ElastiCacheIntegrationsConfigUnevaluable,
+    ElastiCacheIntegrationsConnectionLost,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsError,
+    ElastiCacheIntegrationsOriginError,
+    ElastiCacheIntegrationsProtocolError,
+    ElastiCacheIntegrationsRejectedError,
+    ElastiCacheIntegrationsTimeoutError,
 )
 
 _SUBCLASSES = [
-    PhotonAuthError,
-    PhotonConfigError,
-    PhotonOverridesRejected,
-    PhotonConfigUnevaluable,
-    PhotonConnectionError,
-    PhotonProtocolError,
-    PhotonRejectedError,
-    PhotonConnectionLost,
-    PhotonTimeoutError,
+    ElastiCacheIntegrationsAuthError,
+    ElastiCacheIntegrationsConfigError,
+    ElastiCacheIntegrationsOverridesRejected,
+    ElastiCacheIntegrationsConfigUnevaluable,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsProtocolError,
+    ElastiCacheIntegrationsRejectedError,
+    ElastiCacheIntegrationsConnectionLost,
+    ElastiCacheIntegrationsTimeoutError,
 ]
 
 
-# --- Taxonomy: every failure mode is catchable as PhotonError ------------------
+# --- Taxonomy: every failure mode is catchable as ElastiCacheIntegrationsError ------------------
 
 
 @pytest.mark.parametrize("cls", _SUBCLASSES)
-def test_taxonomy_subclasses_photon_error(cls):
-    """Every failure-mode class is a subclass of PhotonError."""
-    assert issubclass(cls, PhotonError)
+def test_taxonomy_subclasses_elasticache_integrations_error(cls):
+    """Every failure-mode class is a subclass of ElastiCacheIntegrationsError."""
+    assert issubclass(cls, ElastiCacheIntegrationsError)
 
 
-def test_cache_unavailable_is_a_botocore_error_not_a_photon_error():
-    """PhotonCacheUnavailable sits outside the PhotonError tree, on purpose.
+def test_cache_unavailable_is_a_botocore_error_not_a_elasticache_integrations_error():
+    """ElastiCacheIntegrationsCacheUnavailable sits outside the ElastiCacheIntegrationsError tree, on purpose.
 
-    It is the only Photon failure meant to reach the application, so it has to be catchable by the
-    ``except botocore...`` blocks an application already has. Being a PhotonError as well would be
-    worse than redundant: hooks.py catches PhotonError and passes the request through, so it would be
+    It is the only ElastiCacheIntegrations failure meant to reach the application, so it has to be catchable by the
+    ``except botocore...`` blocks an application already has. Being a ElastiCacheIntegrationsError as well would be
+    worse than redundant: hooks.py catches ElastiCacheIntegrationsError and passes the request through, so it would be
     swallowed and the escalation ladder would silently stop working.
     """
-    assert issubclass(PhotonCacheUnavailable, ConnectionClosedError)
-    assert not issubclass(PhotonCacheUnavailable, PhotonError)
+    assert issubclass(ElastiCacheIntegrationsCacheUnavailable, ConnectionClosedError)
+    assert not issubclass(ElastiCacheIntegrationsCacheUnavailable, ElastiCacheIntegrationsError)
 
 
 def test_cache_unavailable_message_says_the_cache_is_unavailable():
-    message = str(PhotonCacheUnavailable(endpoint_url="https://dynamodb.us-east-1.amazonaws.com/"))
+    message = str(
+        ElastiCacheIntegrationsCacheUnavailable(
+            endpoint_url="https://dynamodb.us-east-1.amazonaws.com/"
+        )
+    )
     assert "no connection to the cache" in message
     assert "dynamodb.us-east-1.amazonaws.com" in message
 
 
 def test_origin_error_is_retryable_without_claiming_the_sdk_connection_closed():
-    assert issubclass(PhotonOriginError, ConnectionClosedError)
-    message = str(PhotonOriginError(endpoint_url="https://dynamodb.us-east-1.amazonaws.com/"))
+    assert issubclass(ElastiCacheIntegrationsOriginError, ConnectionClosedError)
+    message = str(
+        ElastiCacheIntegrationsOriginError(endpoint_url="https://dynamodb.us-east-1.amazonaws.com/")
+    )
     assert "could not complete the origin request" in message
     assert "connection was closed" not in message.lower()
 
@@ -72,21 +78,24 @@ def test_origin_error_is_retryable_without_claiming_the_sdk_connection_closed():
 def test_public_api_surface():
     """Verify that only the intended application-facing API is exported.
 
-    Three errors are reachable by an application and so are named here: ``PhotonCacheUnavailable``
-    when a request cannot be served and fallback has closed, ``PhotonConfigError`` when
-    ``photon.client()`` is given something unusable, and ``PhotonError`` as the base for anything
+    Three errors are reachable by an application and so are named here: ``ElastiCacheIntegrationsCacheUnavailable``
+    when a request cannot be served and fallback has closed, ``ElastiCacheIntegrationsConfigError`` when
+    ``elasticache_integrations.client()`` is given something unusable, and ``ElastiCacheIntegrationsError`` as the base for anything
     else that creating a client can raise. The per-failure-mode classes stay internal in
-    ``photon.exceptions``, because the request path converts them to botocore's transport errors
+    ``elasticache_integrations.exceptions``, because the request path converts them to botocore's transport errors
     before an application ever sees them.
     """
-    import photon
+    import elasticache_integrations
 
-    assert photon.__all__ == [
+    assert elasticache_integrations.__all__ == [
         "client",
-        "PhotonClientConfiguration",
-        "PhotonCacheUnavailable",
-        "PhotonConfigError",
-        "PhotonError",
+        "ElastiCacheIntegrationsClientConfiguration",
+        "ElastiCacheIntegrationsCacheUnavailable",
+        "ElastiCacheIntegrationsConfigError",
+        "ElastiCacheIntegrationsError",
         "__version__",
     ]
-    assert photon.PhotonCacheUnavailable is PhotonCacheUnavailable
+    assert (
+        elasticache_integrations.ElastiCacheIntegrationsCacheUnavailable
+        is ElastiCacheIntegrationsCacheUnavailable
+    )

@@ -1,7 +1,7 @@
-"""Tests for photon.refresh.
+"""Tests for elasticache_integrations.refresh.
 
-Refresher is a generic periodic-callback runner with no dependency on PhotonSession,
-PhotonConnector, or any Photon protocol module, so these tests exercise it in isolation with a
+Refresher is a generic periodic-callback runner with no dependency on ElastiCacheIntegrationsSession,
+ElastiCacheIntegrationsConnector, or any ElastiCacheIntegrations protocol module, so these tests exercise it in isolation with a
 plain counting callback. Some tests disable jitter and/or inject a fake ``wait`` for deterministic
 timing; others exercise the real defaults (real jitter, real ``threading.Event.wait``) end-to-end.
 """
@@ -9,7 +9,7 @@ timing; others exercise the real defaults (real jitter, real ``threading.Event.w
 import logging
 import time
 
-from photon.refresh import Refresher
+from elasticache_integrations.refresh import Refresher
 
 
 def _counter():
@@ -83,7 +83,7 @@ def test_stop_is_idempotent():
 
 def test_stop_without_start_does_not_raise():
     """stop() before start() is a no-op: there is no thread to join. Reachable in production via
-    PhotonSession.__init__'s failure path, which closes a session that never started a refresher."""
+    ElastiCacheIntegrationsSession.__init__'s failure path, which closes a session that never started a refresher."""
     Refresher(10, lambda: None).stop()
 
 
@@ -162,12 +162,12 @@ def test_a_failing_callback_does_not_stop_the_loop(caplog):
 
     wait, _ = _fake_wait(stop_after=3)
     refresher = Refresher(60, refresh_once, wait=wait)
-    with caplog.at_level(logging.WARNING, logger="photon.refresh"):
+    with caplog.at_level(logging.WARNING, logger="elasticache_integrations.refresh"):
         refresher.start()
         refresher._thread.join(timeout=5)
     assert len(calls) == 3  # kept going despite raising every tick
     assert "RuntimeError: boom" in caplog.text  # the traceback was logged
-    assert "photon-refresher" in caplog.text  # the task that failed is named
+    assert "elasticache-integrations-refresher" in caplog.text  # the task that failed is named
 
 
 def test_a_failed_tick_uses_backoff_then_resets_to_interval_on_success():

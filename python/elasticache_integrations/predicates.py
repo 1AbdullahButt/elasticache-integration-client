@@ -1,4 +1,4 @@
-"""Client-side evaluation of the CEL routing predicates returned by ``photon.config``.
+"""Client-side evaluation of the CEL routing predicates returned by ``aws.config``.
 
 The proxy is authoritative about what may be cached: it returns an ordered list of predicates, each
 a `CEL <https://cel.dev>`_ boolean expression plus the variables it binds. This module compiles those
@@ -26,8 +26,8 @@ import logging
 import celpy
 from celpy import celtypes
 
-from photon.exceptions import PhotonConfigUnevaluable
-from photon.models import PhotonRequest
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsConfigUnevaluable
+from elasticache_integrations.models import ElastiCacheIntegrationsRequest
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
     Returns ``[]`` when there are no predicates, so every request passes through.
 
     Raises:
-        PhotonConfigUnevaluable: An entry cannot be turned into a working predicate — a non-object
+        ElastiCacheIntegrationsConfigUnevaluable: An entry cannot be turned into a working predicate — a non-object
             entry, a missing or non-string ``expr``, or an expression this client's CEL version
             cannot compile. One such entry taints the whole config, which is rejected rather than
             partly applied: caching by the entries that happened to compile would route a different
@@ -100,14 +100,14 @@ def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
     compiled: list[CompiledPredicate] = []
     for entry in _predicate_entries(raw_config):
         if not isinstance(entry, dict):
-            raise PhotonConfigUnevaluable("Predicate entry is not an object")
+            raise ElastiCacheIntegrationsConfigUnevaluable("Predicate entry is not an object")
         expr = entry.get("expr")
         if not isinstance(expr, str):
-            raise PhotonConfigUnevaluable("Predicate entry has no string 'expr'")
+            raise ElastiCacheIntegrationsConfigUnevaluable("Predicate entry has no string 'expr'")
         try:
             program = env.program(env.compile(expr))
         except celpy.CELParseError as exc:
-            raise PhotonConfigUnevaluable(
+            raise ElastiCacheIntegrationsConfigUnevaluable(
                 f"Predicate expression cannot be compiled: {expr!r}"
             ) from exc
         variables = entry.get("vars")
@@ -117,7 +117,9 @@ def compile_predicates(raw_config: dict | None) -> list[CompiledPredicate]:
     return compiled
 
 
-def should_route_to_photon(predicates: list[CompiledPredicate], request: PhotonRequest) -> bool:
+def should_route_to_cache(
+    predicates: list[CompiledPredicate], request: ElastiCacheIntegrationsRequest
+) -> bool:
     """True when ``request`` should go to the cache. First match wins; empty list routes nothing.
 
     Builds the request context once and reuses it across predicates.
@@ -132,19 +134,19 @@ def _predicate_entries(raw_config: dict | None) -> list:
     """The ``predicates`` array of a resolved config, or ``[]`` when the key is absent.
 
     Raises:
-        PhotonConfigUnevaluable: The key is present but its value is not a list.
+        ElastiCacheIntegrationsConfigUnevaluable: The key is present but its value is not a list.
     """
     if not isinstance(raw_config, dict) or "predicates" not in raw_config:
         return []
     entries = raw_config["predicates"]
     if not isinstance(entries, list):
-        raise PhotonConfigUnevaluable(
+        raise ElastiCacheIntegrationsConfigUnevaluable(
             f"Config 'predicates' must be a list, got {type(entries).__name__}"
         )
     return entries
 
 
-def _build_context(request: PhotonRequest) -> dict:
+def _build_context(request: ElastiCacheIntegrationsRequest) -> dict:
     """The CEL evaluation context for one request.
 
     ``service``/``operation`` come from the metadata the SDK hook derived from the event name; their

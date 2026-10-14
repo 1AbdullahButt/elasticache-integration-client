@@ -1,7 +1,7 @@
-"""Core data models for the Photon client.
+"""Core data models for the ElastiCacheIntegrations client.
 
 These are plain data containers shared across every component (protocol, session, hooks). The
-error taxonomy lives in :mod:`photon.exceptions`.
+error taxonomy lives in :mod:`elasticache_integrations.exceptions`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class RequestMetadata:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class PhotonRequest:
+class ElastiCacheIntegrationsRequest:
     """An intercepted AWS SDK request to be forwarded to the cache."""
 
     method: str
@@ -29,7 +29,7 @@ class PhotonRequest:
 
 
 @dataclass(slots=True, frozen=True)
-class PhotonResponse:
+class ElastiCacheIntegrationsResponse:
     """A response returned by the cache, to be adapted into an SDK response."""
 
     status_code: int
@@ -39,7 +39,7 @@ class PhotonResponse:
 
 @dataclass(slots=True, frozen=True)
 class ResolvedConfig:
-    """Resolved configuration returned by the ``photon.config`` handshake."""
+    """Resolved configuration returned by the ``aws.config`` handshake."""
 
     refresh_interval: int
     version: str | None = None

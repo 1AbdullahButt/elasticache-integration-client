@@ -29,7 +29,7 @@ class Refresher:
         interval: float,
         refresh_once: Callable[[], None],
         *,
-        name: str = "photon-refresher",
+        name: str = "elasticache-integrations-refresher",
         jitter: float = 0.2,
         failure_delay: Callable[[int], float] | None = None,
         wait: Callable[[threading.Event, float], bool] | None = None,
@@ -77,7 +77,7 @@ class Refresher:
                 level = logging.WARNING if failures == 1 or failures % 100 == 0 else logging.DEBUG
                 logger.log(
                     level,
-                    "Photon background task %s failed (%d in a row); retrying. The cache keeps serving meanwhile.",
+                    "ElastiCacheIntegrations background task %s failed (%d in a row); retrying. The cache keeps serving meanwhile.",
                     self._name,
                     failures,
                     exc_info=True,
