@@ -2,7 +2,7 @@
 
 ## Scope
 
-- This repository is a TypeScript implementation of the Photon Node.js client.
+- This repository is a TypeScript implementation of the ElastiCacheIntegrations Node.js client.
 - `README.md` is the source for user-facing API behavior and feature scope.
 - Keep this file focused on repository workflow, constraints, and non-obvious
   implementation context.
@@ -11,7 +11,7 @@
 
 - `src/`: production TypeScript modules.
 - `test/`: Vitest tests organized by production concern.
-- `test/mock-cache.ts`: reusable local plaintext/TLS Photon mock.
+- `test/mock-cache.ts`: reusable local plaintext/TLS ElastiCacheIntegrations mock.
 - `scripts/`: build, cleanup, and package smoke-test tooling.
 - `src/index.ts`: public package export boundary.
 - `src/predicates.ts`: compiled CEL request-routing predicates.
@@ -49,7 +49,7 @@ as separate steps. `npm run verify` is the equivalent aggregate local gate.
   exports through the package type validation.
 - Ensure changed behavior has focused regression coverage; add or update tests
   when existing coverage does not already lock the behavior.
-- Use `test/mock-cache.ts` for Photon command/response integration tests. A
+- Use `test/mock-cache.ts` for ElastiCacheIntegrations command/response integration tests. A
   purpose-built socket is acceptable for transport-failure or handshake tests.
 
 ## Review bot
@@ -66,10 +66,10 @@ require the corresponding tests, README, and package checks to change with it.
   break consumers or expose internals. Safe path: keep `src/index.ts`
   deliberate and update README/tests plus `npm run pack:smoke` for intentional
   changes.
-- **Wire shape:** flag changes that can alter Photon interoperability or
+- **Wire shape:** flag changes that can alter ElastiCacheIntegrations interoperability or
   corrupt bytes. Safe path: preserve binary-safe RESP framing and the exact
-  `photon.request` five-argument order—method, URL, normalized headers, body,
-  metadata—and the JSON-object `photon.config` contract.
+  `aws.request` five-argument order—method, URL, normalized headers, body,
+  metadata—and the JSON-object `aws.config` contract.
 - **Header separation:** flag nondeterministic normalization or volatile
   authorization/date/request headers entering normalized wire headers. Safe
   path: lowercase, trim, sort, and exclude them while preserving the final
@@ -85,7 +85,7 @@ require the corresponding tests, README, and package checks to change with it.
   enforce the response-size bound, and reset the whole connection on timeout
   so late replies cannot match later requests.
 - **Session lifecycle and recovery:** flag changes that permit requests before
-  `connect → authenticate → photon.config`, use after close, or duplicate
+  `connect → authenticate → aws.config`, use after close, or duplicate
   teardown, create parallel recovery flights, reuse stale AUTH credentials, or
   publish a connector with stale predicates. Safe path: preserve the one-way
   lifecycle, cleanup on failed open, one continuous background reconnect loop
@@ -93,13 +93,13 @@ require the corresponding tests, README, and package checks to change with it.
   and idempotent `close()`/`destroy()`.
 - **Middleware path:** flag changes that use a non-final serialized request,
   bypass normal SDK deserialization/retry behavior, consume a body that is not
-  bytes-like, or destroy the SDK before Photon. Safe path: preserve final
+  bytes-like, or destroy the SDK before ElastiCacheIntegrations. Safe path: preserve final
   serialized unsigned request ordering, synthetic responses, bodies that are
   not bytes-like, such as streams, passed through to the origin without
-  calling Photon, dropped-connection fallback
+  calling ElastiCacheIntegrations, dropped-connection fallback
   only for cataloged operations, healthy-connection `ORIGIN_ERROR` retries
   only for cataloged operations, other RESP/non-idempotent/validation/shutdown
-  failures propagating, and Photon-first teardown.
+  failures propagating, and ElastiCacheIntegrations-first teardown.
 - **Authentication and transport:** flag divergence from the SDK credential
   provider, stale IAM tokens, reusable connections after initial AUTH failure,
   TLS verification that is off by default or off implicitly, or plaintext by
@@ -164,7 +164,7 @@ Normal AWS SDK retry and deserialization behavior remains in scope.
   other secret material. Wrapped requests are fully serialized but not
   origin-signed; Roxy owns origin signing. ElastiCache IAM `elasticache:connect`
   token signing remains separate and is confined to `AUTH`.
-- Prefer hermetic tests and local mocks over live AWS or Photon endpoints.
+- Prefer hermetic tests and local mocks over live AWS or ElastiCacheIntegrations endpoints.
 - The checked-in TLS certificate and key under `test/fixtures/tls/` are
   localhost-only test fixtures and must not be used for production.
 

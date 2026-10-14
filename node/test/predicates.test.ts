@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { PhotonConfigUnevaluable } from "../src/errors.js";
-import { PhotonRequest, RequestMetadata } from "../src/models.js";
+import { ElastiCacheIntegrationsConfigUnevaluable } from "../src/errors.js";
+import { ElastiCacheIntegrationsRequest, RequestMetadata } from "../src/models.js";
 import { PredicateEvaluator } from "../src/predicates.js";
 
 const allOperations = [
@@ -30,8 +30,8 @@ function request(
   operation: string,
   body: Buffer | string | null = "{}",
   options: { service?: string; url?: string; headers?: Record<string, string> } = {},
-): PhotonRequest {
-  return new PhotonRequest({
+): ElastiCacheIntegrationsRequest {
+  return new ElastiCacheIntegrationsRequest({
     method: "POST",
     url: options.url ?? "https://dynamodb.us-east-1.amazonaws.com/",
     headers: options.headers,
@@ -74,36 +74,34 @@ describe("PredicateEvaluator", () => {
     const predicates = defaultEvaluator();
 
     for (const operation of allOperations) {
-      expect(predicates.shouldRouteToPhoton(request(operation)), operation).toBe(true);
+      expect(predicates.shouldRouteToCache(request(operation)), operation).toBe(true);
     }
     for (const operation of ["CreateTable", "DescribeTable", "ExecuteStatement"]) {
-      expect(predicates.shouldRouteToPhoton(request(operation)), operation).toBe(false);
+      expect(predicates.shouldRouteToCache(request(operation)), operation).toBe(false);
     }
-    expect(predicates.shouldRouteToPhoton(request("GetItem", "{}", { service: "s3" }))).toBe(false);
+    expect(predicates.shouldRouteToCache(request("GetItem", "{}", { service: "s3" }))).toBe(false);
   });
 
   it("routes single-table, batch, and transaction allowlists", () => {
     const predicates = tableAllowlistEvaluator("Users", "Sessions");
 
-    expect(predicates.shouldRouteToPhoton(request("GetItem", '{"TableName":"Users"}'))).toBe(true);
-    expect(predicates.shouldRouteToPhoton(request("PutItem", '{"TableName":"Orders"}'))).toBe(
-      false,
-    );
+    expect(predicates.shouldRouteToCache(request("GetItem", '{"TableName":"Users"}'))).toBe(true);
+    expect(predicates.shouldRouteToCache(request("PutItem", '{"TableName":"Orders"}'))).toBe(false);
     expect(
-      predicates.shouldRouteToPhoton(
+      predicates.shouldRouteToCache(
         request("BatchGetItem", '{"RequestItems":{"Users":{},"Sessions":{}}}'),
       ),
     ).toBe(true);
     expect(
-      predicates.shouldRouteToPhoton(
+      predicates.shouldRouteToCache(
         request("BatchWriteItem", '{"RequestItems":{"Users":[],"Orders":[]}}'),
       ),
     ).toBe(false);
-    expect(predicates.shouldRouteToPhoton(request("BatchGetItem", '{"RequestItems":{}}'))).toBe(
+    expect(predicates.shouldRouteToCache(request("BatchGetItem", '{"RequestItems":{}}'))).toBe(
       false,
     );
     expect(
-      predicates.shouldRouteToPhoton(
+      predicates.shouldRouteToCache(
         request(
           "TransactGetItems",
           '{"TransactItems":[{"Get":{"TableName":"Users"}},{"Get":{"TableName":"Sessions"}}]}',
@@ -111,20 +109,20 @@ describe("PredicateEvaluator", () => {
       ),
     ).toBe(true);
     expect(
-      predicates.shouldRouteToPhoton(
+      predicates.shouldRouteToCache(
         request("TransactWriteItems", '{"TransactItems":[{"Put":{"TableName":"Orders"}}]}'),
       ),
     ).toBe(false);
-    expect(
-      predicates.shouldRouteToPhoton(request("TransactGetItems", '{"TransactItems":[]}')),
-    ).toBe(false);
+    expect(predicates.shouldRouteToCache(request("TransactGetItems", '{"TransactItems":[]}'))).toBe(
+      false,
+    );
   });
 
   it("compiles a missing predicates field to no predicates", () => {
-    expect(PredicateEvaluator.compile(undefined).shouldRouteToPhoton(request("GetItem"))).toBe(
+    expect(PredicateEvaluator.compile(undefined).shouldRouteToCache(request("GetItem"))).toBe(
       false,
     );
-    expect(PredicateEvaluator.compile({}).shouldRouteToPhoton(request("GetItem"))).toBe(false);
+    expect(PredicateEvaluator.compile({}).shouldRouteToCache(request("GetItem"))).toBe(false);
   });
 
   it.each([
@@ -133,7 +131,7 @@ describe("PredicateEvaluator", () => {
     ["null", null],
   ])("rejects the config when predicates is %s", (_, value) => {
     expect(() => PredicateEvaluator.compile({ predicates: value })).toThrow(
-      PhotonConfigUnevaluable,
+      ElastiCacheIntegrationsConfigUnevaluable,
     );
   });
 
@@ -146,36 +144,36 @@ describe("PredicateEvaluator", () => {
     ["an expression that fails type checking", predicate("operation == 1")],
   ])("rejects the whole config for %s", (_, bad) => {
     expect(() => evaluator(predicate("operation == 'GetItem'"), bad)).toThrow(
-      PhotonConfigUnevaluable,
+      ElastiCacheIntegrationsConfigUnevaluable,
     );
   });
 
   it("treats non-object vars as no vars", () => {
     const predicates = evaluator({ expr: "operation == 'GetItem'", vars: "not-an-object" });
 
-    expect(predicates.shouldRouteToPhoton(request("GetItem"))).toBe(true);
+    expect(predicates.shouldRouteToCache(request("GetItem"))).toBe(true);
   });
 
   it("routes only when the runtime result is exactly true", () => {
     expect(
-      evaluator(predicate("enabled", { enabled: true })).shouldRouteToPhoton(request("GetItem")),
+      evaluator(predicate("enabled", { enabled: true })).shouldRouteToCache(request("GetItem")),
     ).toBe(true);
     expect(
-      evaluator(predicate("enabled", { enabled: false })).shouldRouteToPhoton(request("GetItem")),
+      evaluator(predicate("enabled", { enabled: false })).shouldRouteToCache(request("GetItem")),
     ).toBe(false);
+    expect(evaluator(predicate("value", { value: 1 })).shouldRouteToCache(request("GetItem"))).toBe(
+      false,
+    );
     expect(
-      evaluator(predicate("value", { value: 1 })).shouldRouteToPhoton(request("GetItem")),
+      evaluator(predicate("value", { value: "non-empty" })).shouldRouteToCache(request("GetItem")),
     ).toBe(false);
-    expect(
-      evaluator(predicate("value", { value: "non-empty" })).shouldRouteToPhoton(request("GetItem")),
-    ).toBe(false);
-    expect(evaluator(predicate("1")).shouldRouteToPhoton(request("GetItem"))).toBe(false);
+    expect(evaluator(predicate("1")).shouldRouteToCache(request("GetItem"))).toBe(false);
   });
 
   it("treats malformed and non-object bodies as no match", () => {
     const predicates = defaultEvaluator();
 
-    expect(predicates.shouldRouteToPhoton(request("GetItem", ""))).toBe(true);
+    expect(predicates.shouldRouteToCache(request("GetItem", ""))).toBe(true);
     for (const body of [
       "not json",
       "[]",
@@ -183,7 +181,7 @@ describe("PredicateEvaluator", () => {
       '{"TableName":"Users"} trailing',
       Buffer.from([...Buffer.from('{"TableName":"Users","invalid":"'), 0xff, ...Buffer.from('"}')]),
     ]) {
-      expect(predicates.shouldRouteToPhoton(request("GetItem", body)), body).toBe(false);
+      expect(predicates.shouldRouteToCache(request("GetItem", body)), body).toBe(false);
     }
   });
 
@@ -198,10 +196,10 @@ describe("PredicateEvaluator", () => {
     );
 
     expect(
-      predicates.shouldRouteToPhoton(request("GetItem", "{}", { headers: { "x-test": "yes" } })),
+      predicates.shouldRouteToCache(request("GetItem", "{}", { headers: { "x-test": "yes" } })),
     ).toBe(true);
     expect(
-      predicates.shouldRouteToPhoton(
+      predicates.shouldRouteToCache(
         request("GetItem", "{}", {
           headers: { "x-test": "yes" },
           url: "https://s3.us-east-1.amazonaws.com/",
@@ -209,7 +207,7 @@ describe("PredicateEvaluator", () => {
       ),
     ).toBe(false);
     expect(
-      predicates.shouldRouteToPhoton(request("PutItem", "{}", { headers: { "x-test": "yes" } })),
+      predicates.shouldRouteToCache(request("PutItem", "{}", { headers: { "x-test": "yes" } })),
     ).toBe(false);
   });
 
@@ -219,7 +217,7 @@ describe("PredicateEvaluator", () => {
     const body = prefix + "x".repeat(600 * 1024 - prefix.length - suffix.length) + suffix;
 
     expect(Buffer.byteLength(body)).toBe(600 * 1024);
-    expect(tableAllowlistEvaluator("Users").shouldRouteToPhoton(request("GetItem", body))).toBe(
+    expect(tableAllowlistEvaluator("Users").shouldRouteToCache(request("GetItem", body))).toBe(
       true,
     );
   });

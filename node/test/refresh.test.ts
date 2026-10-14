@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PhotonError } from "../src/errors.js";
+import { ElastiCacheIntegrationsError } from "../src/errors.js";
 import { Refresher } from "../src/refresh.js";
 
 /** Captured delays passed to setTimeout, in milliseconds. */
@@ -156,7 +156,7 @@ describe("Refresher", () => {
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects the invalid interval %s",
     (interval) => {
-      expect(() => new Refresher(interval, () => undefined)).toThrow(PhotonError);
+      expect(() => new Refresher(interval, () => undefined)).toThrow(ElastiCacheIntegrationsError);
     },
   );
 
@@ -165,7 +165,9 @@ describe("Refresher", () => {
     const maxIntervalSeconds = Math.floor((2 ** 31 - 1) / 1000 / 1.2);
 
     expect(() => new Refresher(maxIntervalSeconds, () => undefined)).not.toThrow();
-    expect(() => new Refresher(maxIntervalSeconds + 1, () => undefined)).toThrow(PhotonError);
+    expect(() => new Refresher(maxIntervalSeconds + 1, () => undefined)).toThrow(
+      ElastiCacheIntegrationsError,
+    );
     // Jitter widens the largest delay, so a smaller interval is allowed without it.
     expect(
       () => new Refresher(maxIntervalSeconds + 1, () => undefined, { jitter: 0 }),
@@ -231,7 +233,7 @@ describe("Refresher", () => {
     });
     const refresher = new Refresher(100, refreshOnce, {
       jitter: 0,
-      name: "photon-reauth",
+      name: "elastiCacheIntegrations-reauth",
       failureDelayMs: (failures) => failures * 1_000,
     });
 
@@ -240,7 +242,7 @@ describe("Refresher", () => {
     refresher.stop();
 
     expect(delays.slice(0, 4)).toEqual([100_000, 1_000, 2_000, 100_000]);
-    expect(warn.mock.calls[0]?.[0]).toContain("photon-reauth");
+    expect(warn.mock.calls[0]?.[0]).toContain("elastiCacheIntegrations-reauth");
   });
 
   it("does not reschedule after stop during an in-flight callback", async () => {
@@ -320,7 +322,7 @@ describe("Refresher", () => {
     (interval) => {
       const refresher = new Refresher(10, () => undefined);
 
-      expect(() => refresher.setInterval(interval)).toThrow(PhotonError);
+      expect(() => refresher.setInterval(interval)).toThrow(ElastiCacheIntegrationsError);
       refresher.stop();
     },
   );
@@ -330,7 +332,7 @@ describe("Refresher", () => {
     const refresher = new Refresher(10, () => undefined, { jitter: 0 });
 
     refresher.start();
-    expect(() => refresher.setInterval(0)).toThrow(PhotonError);
+    expect(() => refresher.setInterval(0)).toThrow(ElastiCacheIntegrationsError);
     await vi.advanceTimersByTimeAsync(20_000);
     refresher.stop();
 
@@ -338,7 +340,9 @@ describe("Refresher", () => {
   });
 
   it.each([-0.1, 1, 1.5, Number.NaN])("rejects the invalid jitter %s", (jitter) => {
-    expect(() => new Refresher(10, () => undefined, { jitter })).toThrow(PhotonError);
+    expect(() => new Refresher(10, () => undefined, { jitter })).toThrow(
+      ElastiCacheIntegrationsError,
+    );
   });
 });
 

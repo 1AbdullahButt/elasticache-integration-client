@@ -14,14 +14,14 @@ java_dir=$(cd "$script_dir/.." && pwd)
 "$java_dir/gradlew" \
     --no-daemon \
     -p "$java_dir/smoke/gradle" \
-    -PphotonRepository="$repository_url" \
-    -PphotonVersion="$version" \
+    -PcacheRepository="$repository_url" \
+    -PcacheVersion="$version" \
     clean smoke
 
 mvn \
     --batch-mode \
     --no-transfer-progress \
     -f "$java_dir/smoke/maven/pom.xml" \
-    -Dphoton.repository="$repository_url" \
-    -Dphoton.version="$version" \
+    -Dcache.repository="$repository_url" \
+    -Dcache.version="$version" \
     clean verify

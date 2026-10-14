@@ -6,12 +6,12 @@ import {
 } from "node:tls";
 
 import {
-  PhotonAuthError,
-  PhotonConnectionLost,
-  PhotonConnectionError,
-  PhotonError,
-  PhotonProtocolError,
-  PhotonTimeoutError,
+  ElastiCacheIntegrationsAuthError,
+  ElastiCacheIntegrationsConnectionLost,
+  ElastiCacheIntegrationsConnectionError,
+  ElastiCacheIntegrationsError,
+  ElastiCacheIntegrationsProtocolError,
+  ElastiCacheIntegrationsTimeoutError,
 } from "./errors.js";
 import { PUSH_KIND_RESPONSE, REQUEST_COMMAND } from "./protocol.js";
 import {
@@ -27,14 +27,14 @@ import {
 const DEFAULT_READ_SIZE = 64 * 1024;
 const DEFAULT_CONNECT_TIMEOUT = 1_000; // TCP connect and TLS handshake.
 const DEFAULT_REQUEST_TIMEOUT = 5_000;
-const DEFAULT_CONFIG_TIMEOUT = 2_000; // Initialization commands: HELLO, AUTH and photon.config.
+const DEFAULT_CONFIG_TIMEOUT = 2_000; // Initialization commands: HELLO, AUTH and aws.config.
 const DEFAULT_MAX_RESPONSE_SIZE = 16 * 1024 * 1024;
 const RESP3_PROTOCOL = 3;
 const HELLO_PROTO_KEY = Buffer.from("proto", "ascii");
 
 function validatePositiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new PhotonError(`${name} must be a positive integer`);
+    throw new ElastiCacheIntegrationsError(`${name} must be a positive integer`);
   }
   return value;
 }
@@ -73,7 +73,7 @@ export class SocketReader {
       try {
         const [value, consumed] = decodeResp(this.storage.subarray(this.start, this.end));
         if (consumed > this.maxResponseSize) {
-          throw new PhotonProtocolError(
+          throw new ElastiCacheIntegrationsProtocolError(
             `maximum response size of ${this.maxResponseSize} bytes exceeded`,
           );
         }
@@ -119,13 +119,13 @@ export class SocketReader {
     while (this.pendingChunk.length === 0) {
       const next = await this.iterator.next();
       if (next.done) {
-        throw new PhotonConnectionLost("connection closed by peer");
+        throw new ElastiCacheIntegrationsConnectionLost("connection closed by peer");
       }
       if (!Buffer.isBuffer(next.value)) {
-        throw new PhotonProtocolError("socket yielded a non-buffer chunk");
+        throw new ElastiCacheIntegrationsProtocolError("socket yielded a non-buffer chunk");
       }
       if (next.value.length === 0) {
-        throw new PhotonConnectionLost("connection closed by peer");
+        throw new ElastiCacheIntegrationsConnectionLost("connection closed by peer");
       }
       this.pendingChunk = next.value;
     }
@@ -145,7 +145,7 @@ export class SocketReader {
 
   private ensureWithinLimit(): void {
     if (this.end - this.start > this.maxResponseSize) {
-      throw new PhotonProtocolError(
+      throw new ElastiCacheIntegrationsProtocolError(
         `maximum response size of ${this.maxResponseSize} bytes exceeded`,
       );
     }
@@ -172,7 +172,9 @@ export class PendingRequests {
 
   registerNewRequest(deferredResponseAllowed = true): PendingRequest {
     if (this.queue.length + this.asyncResponses.size >= this.maxPending) {
-      throw new PhotonError(`maximum pending requests of ${this.maxPending} reached`);
+      throw new ElastiCacheIntegrationsError(
+        `maximum pending requests of ${this.maxPending} reached`,
+      );
     }
 
     let resolveRequest!: (value: RespValue) => void;
@@ -202,7 +204,7 @@ export class PendingRequests {
 
   moveNextToAsyncResponses(requestId: string): boolean {
     if (this.queue.length === 0) {
-      throw new PhotonProtocolError(
+      throw new ElastiCacheIntegrationsProtocolError(
         `received async response id without a pending FIFO request: ${requestId}`,
       );
     }
@@ -210,7 +212,7 @@ export class PendingRequests {
       return false;
     }
     if (this.asyncResponses.has(requestId)) {
-      throw new PhotonProtocolError(`duplicate async response id: ${requestId}`);
+      throw new ElastiCacheIntegrationsProtocolError(`duplicate async response id: ${requestId}`);
     }
     this.asyncResponses.set(requestId, this.queue.shift()!);
     return true;
@@ -253,14 +255,14 @@ interface SentRequest {
   readonly response: Promise<RespValue>;
 }
 
-export interface PhotonConnectorOptions {
+export interface ElastiCacheIntegrationsConnectorOptions {
   /** Use TLS with hostname verification. Defaults to `true`. */
   tls?: boolean;
   /** TCP/TLS establishment timeout in milliseconds. */
   connectTimeout?: number;
   /** Per-request response timeout in milliseconds. Defaults to 5000. */
   requestTimeout?: number;
-  /** Timeout for HELLO, AUTH, and photon.config commands in milliseconds. */
+  /** Timeout for HELLO, AUTH, and aws.config commands in milliseconds. */
   configTimeout?: number;
   /** PEM certificate authority data passed to Node's TLS client. */
   caCerts?: string | Buffer | Array<string | Buffer>;
@@ -281,7 +283,7 @@ export interface PhotonConnectorOptions {
   maxResponseSize?: number;
   /**
    * Maximum number of requests still awaiting a reply, including deferred
-   * requests awaiting their async `photon.response` push. Defaults to 100.
+   * requests awaiting their async `aws.response` push. Defaults to 100.
    */
   maxPending?: number;
   /** Provider for the `(userId, token)` credentials carried by the HELLO handshake. */
@@ -302,7 +304,7 @@ export type AuthProvider =
       refreshAuth?: () => [string, string] | Promise<[string, string]>;
     };
 
-class PhotonHandshakeRejected extends PhotonConnectionError {}
+class ElastiCacheIntegrationsHandshakeRejected extends ElastiCacheIntegrationsConnectionError {}
 
 type ConnectedSocket = Socket | TLSSocket;
 
@@ -323,30 +325,30 @@ function warnInsecureSkipVerify(): void {
   if (warnedInsecureSkipVerify) return;
   warnedInsecureSkipVerify = true;
   process.emitWarning(
-    "Photon TLS certificate verification is disabled (insecureSkipVerify). " +
+    "ElastiCacheIntegrations TLS certificate verification is disabled (insecureSkipVerify). " +
       "Expected only against a local or test endpoint.",
-    "PhotonInsecureTlsWarning",
+    "ElastiCacheIntegrationsInsecureTlsWarning",
   );
 }
 
 /**
- * A single Photon TCP/TLS connection with serialized writes and FIFO/request-ID responses.
+ * A single ElastiCacheIntegrations TCP/TLS connection with serialized writes and FIFO/request-ID responses.
  *
  * Positional and write timeouts close the connection; deferred request-ID timeouts remove only
  * that request because a late push cannot be mis-correlated with a later FIFO response.
  */
-export class PhotonConnector {
+export class ElastiCacheIntegrationsConnector {
   private readonly host: string;
   private readonly port: number;
   private readonly useTls: boolean;
   private readonly connectTimeout: number;
   private readonly requestTimeout: number;
   private readonly configTimeout: number;
-  private readonly caCerts: PhotonConnectorOptions["caCerts"];
+  private readonly caCerts: ElastiCacheIntegrationsConnectorOptions["caCerts"];
   private readonly insecureSkipVerify: boolean;
   private readonly readSize: number;
   private readonly maxResponseSize: number;
-  private readonly authProvider: PhotonConnectorOptions["authProvider"];
+  private readonly authProvider: ElastiCacheIntegrationsConnectorOptions["authProvider"];
 
   private socket: ConnectedSocket | undefined;
   private openingSocket: ConnectedSocket | undefined;
@@ -361,7 +363,7 @@ export class PhotonConnector {
   /** Called once when this connector ends, including deliberate close. */
   onDisconnect: (() => void) | undefined;
 
-  constructor(host: string, port: number, options: PhotonConnectorOptions = {}) {
+  constructor(host: string, port: number, options: ElastiCacheIntegrationsConnectorOptions = {}) {
     this.host = host;
     this.port = port;
     this.useTls = options.tls ?? true;
@@ -382,13 +384,17 @@ export class PhotonConnector {
   /** Open the socket, perform TLS when enabled, and start the background reader. */
   async connect(): Promise<void> {
     if (this.closed) {
-      throw new PhotonError("PhotonConnector used after close()");
+      throw new ElastiCacheIntegrationsError("ElastiCacheIntegrationsConnector used after close()");
     }
     if (this.socket !== undefined) {
-      throw new PhotonError("PhotonConnector is already connected");
+      throw new ElastiCacheIntegrationsError(
+        "ElastiCacheIntegrationsConnector is already connected",
+      );
     }
     if (this.connecting) {
-      throw new PhotonError("PhotonConnector is already connecting");
+      throw new ElastiCacheIntegrationsError(
+        "ElastiCacheIntegrationsConnector is already connecting",
+      );
     }
 
     this.connecting = true;
@@ -404,7 +410,9 @@ export class PhotonConnector {
       socket.setTimeout(0);
       if (this.closed) {
         socket.destroy();
-        throw new PhotonConnectionError("PhotonConnector closed during connect()");
+        throw new ElastiCacheIntegrationsConnectionError(
+          "ElastiCacheIntegrationsConnector closed during connect()",
+        );
       }
       this.socket = socket;
       this.openingSocket = undefined;
@@ -420,10 +428,13 @@ export class PhotonConnector {
       );
     } catch (error) {
       socket?.destroy();
-      if (error instanceof PhotonConnectionError) throw error;
-      throw new PhotonConnectionError(`Failed to connect to ${this.host}:${this.port}`, {
-        cause: error,
-      });
+      if (error instanceof ElastiCacheIntegrationsConnectionError) throw error;
+      throw new ElastiCacheIntegrationsConnectionError(
+        `Failed to connect to ${this.host}:${this.port}`,
+        {
+          cause: error,
+        },
+      );
     } finally {
       this.openingSocket = undefined;
       this.connecting = false;
@@ -433,7 +444,9 @@ export class PhotonConnector {
   /** Negotiate RESP3 and authenticate in one `HELLO 3 AUTH <user> <token>` exchange. */
   async handshake(): Promise<void> {
     if (this.authProvider === undefined) {
-      throw new PhotonConnectionError("PhotonConnector requires an auth provider to handshake");
+      throw new ElastiCacheIntegrationsConnectionError(
+        "ElastiCacheIntegrationsConnector requires an auth provider to handshake",
+      );
     }
 
     const credentials = await this.authCredentials();
@@ -448,15 +461,19 @@ export class PhotonConnector {
       );
       this.verifyHelloReply(reply);
     } catch (error) {
-      if (error instanceof PhotonTimeoutError) {
+      if (error instanceof ElastiCacheIntegrationsTimeoutError) {
         await this.close();
-        throw new PhotonConnectionError("HELLO 3 timed out — connection closed", { cause: error });
+        throw new ElastiCacheIntegrationsConnectionError("HELLO 3 timed out — connection closed", {
+          cause: error,
+        });
       }
-      if (error instanceof PhotonConnectionLost) {
+      if (error instanceof ElastiCacheIntegrationsConnectionLost) {
         await this.close();
-        throw new PhotonConnectionError("HELLO 3 failed: connection lost", { cause: error });
+        throw new ElastiCacheIntegrationsConnectionError("HELLO 3 failed: connection lost", {
+          cause: error,
+        });
       }
-      if (error instanceof PhotonHandshakeRejected) {
+      if (error instanceof ElastiCacheIntegrationsHandshakeRejected) {
         try {
           await this.authProvider.refreshAuth?.();
         } catch {
@@ -486,11 +503,11 @@ export class PhotonConnector {
       );
       this.verifyReauthenticationReply(reply);
     } catch (error) {
-      if (error instanceof PhotonTimeoutError) {
+      if (error instanceof ElastiCacheIntegrationsTimeoutError) {
         await this.close();
-        throw new PhotonConnectionError("IAM AUTH timed out", { cause: error });
+        throw new ElastiCacheIntegrationsConnectionError("IAM AUTH timed out", { cause: error });
       }
-      if (error instanceof PhotonAuthError && !this.isDead) {
+      if (error instanceof ElastiCacheIntegrationsAuthError && !this.isDead) {
         try {
           await this.authProvider.refreshAuth?.();
         } catch {
@@ -506,7 +523,7 @@ export class PhotonConnector {
     if (this.closed) return;
     this.closed = true;
     this.dead = true;
-    this.pending.failAll(new PhotonConnectionLost("connection closed"));
+    this.pending.failAll(new ElastiCacheIntegrationsConnectionLost("connection closed"));
     const socket = this.socket;
     try {
       this.openingSocket?.destroy();
@@ -533,12 +550,14 @@ export class PhotonConnector {
   async execute(command: string, ...args: Buffer[]): Promise<RespValue> {
     if (this.socket === undefined) {
       if (this.closed) {
-        throw new PhotonConnectionLost("connection is closed");
+        throw new ElastiCacheIntegrationsConnectionLost("connection is closed");
       }
-      throw new PhotonError("PhotonConnector used before connect()");
+      throw new ElastiCacheIntegrationsError(
+        "ElastiCacheIntegrationsConnector used before connect()",
+      );
     }
     if (this.dead) {
-      throw new PhotonConnectionLost("connection is closed");
+      throw new ElastiCacheIntegrationsConnectionLost("connection is closed");
     }
 
     let sent: SentRequest | undefined;
@@ -546,7 +565,7 @@ export class PhotonConnector {
       sent = this.send(command, ...args);
       return await this.waitForResponse(sent.response, this.timeoutFor(command));
     } catch (error) {
-      if (error instanceof PhotonTimeoutError) {
+      if (error instanceof ElastiCacheIntegrationsTimeoutError) {
         // Once the request has moved out of the FIFO, a late response cannot be matched to
         // another caller. Remove that map entry and preserve the connection.
         if (
@@ -554,7 +573,7 @@ export class PhotonConnector {
           sent.pending.writeCompleted &&
           this.pending.removeFromAsync(sent.pending)
         ) {
-          const asyncTimeout = new PhotonTimeoutError(
+          const asyncTimeout = new ElastiCacheIntegrationsTimeoutError(
             `async request timed out after ${this.timeoutFor(command)}ms`,
           );
           sent.pending.settled = true;
@@ -581,14 +600,14 @@ export class PhotonConnector {
 
   private send(command: string, ...args: Buffer[]): SentRequest {
     if (this.dead || this.socket === undefined) {
-      throw new PhotonConnectionLost("connection is closed");
+      throw new ElastiCacheIntegrationsConnectionLost("connection is closed");
     }
 
     const frame = encodeResp(command, ...args);
     const response = this.pending.registerNewRequest(command.toLowerCase() === REQUEST_COMMAND);
     const socket = this.socket;
     if (socket === undefined) {
-      throw new PhotonConnectionLost("connection is closed");
+      throw new ElastiCacheIntegrationsConnectionLost("connection is closed");
     }
 
     return {
@@ -627,9 +646,10 @@ export class PhotonConnector {
       // The frame may be partially written. Reusing the stream could mis-correlate a late
       // response, so close the connection and fail every pending request.
       const failure =
-        error instanceof PhotonTimeoutError || error instanceof PhotonConnectionLost
+        error instanceof ElastiCacheIntegrationsTimeoutError ||
+        error instanceof ElastiCacheIntegrationsConnectionLost
           ? error
-          : new PhotonConnectionLost("send failed", { cause: error });
+          : new ElastiCacheIntegrationsConnectionLost("send failed", { cause: error });
       // `close()` rejects this response too; consume that rejection because the send error
       // is the failure reported to the caller.
       void pending.promise.catch(() => undefined);
@@ -641,12 +661,12 @@ export class PhotonConnector {
   /**
    * Select the response timeout for a command.
    *
-   * HELLO, background AUTH, and photon.config use the larger config timeout.
+   * HELLO, background AUTH, and aws.config use the larger config timeout.
    * Send/drain waits remain bounded by requestTimeout.
    */
   private timeoutFor(command: string): number {
     // Bring-up commands get a larger response budget; send-side waits stay on requestTimeout.
-    return command === "HELLO" || command === "AUTH" || command === "photon.config"
+    return command === "HELLO" || command === "AUTH" || command === "aws.config"
       ? this.configTimeout
       : this.requestTimeout;
   }
@@ -661,7 +681,9 @@ export class PhotonConnector {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
-        finishReject(new PhotonTimeoutError(`send timed out after ${this.requestTimeout}ms`));
+        finishReject(
+          new ElastiCacheIntegrationsTimeoutError(`send timed out after ${this.requestTimeout}ms`),
+        );
       }, this.requestTimeout);
 
       const cleanup = () => {
@@ -684,8 +706,9 @@ export class PhotonConnector {
       };
       const onDrain = () => finishResolve();
       const onError = (error: Error) =>
-        finishReject(new PhotonConnectionLost("send failed", { cause: error }));
-      const onClose = () => finishReject(new PhotonConnectionLost("connection closed"));
+        finishReject(new ElastiCacheIntegrationsConnectionLost("send failed", { cause: error }));
+      const onClose = () =>
+        finishReject(new ElastiCacheIntegrationsConnectionLost("connection closed"));
 
       socket.once("drain", onDrain);
       socket.once("error", onError);
@@ -699,7 +722,7 @@ export class PhotonConnector {
       this.openingSocket = socket;
       let settled = false;
       const timer = setTimeout(() => {
-        const error = new PhotonConnectionError(
+        const error = new ElastiCacheIntegrationsConnectionError(
           `Timed out connecting to ${this.host}:${this.port}`,
         );
         socket.destroy();
@@ -719,7 +742,7 @@ export class PhotonConnector {
       };
       const onConnect = () => finish(socket);
       const onError = (error: Error) => {
-        const wrapped = new PhotonConnectionError(
+        const wrapped = new ElastiCacheIntegrationsConnectionError(
           `Failed to connect to ${this.host}:${this.port}`,
           { cause: error },
         );
@@ -728,15 +751,15 @@ export class PhotonConnector {
       };
       const onClose = () => {
         finish(
-          new PhotonConnectionError(
+          new ElastiCacheIntegrationsConnectionError(
             this.closed
-              ? "PhotonConnector closed during connect()"
+              ? "ElastiCacheIntegrationsConnector closed during connect()"
               : `Connection closed while connecting to ${this.host}:${this.port}`,
           ),
         );
       };
       const onTimeout = () => {
-        const error = new PhotonConnectionError(
+        const error = new ElastiCacheIntegrationsConnectionError(
           `Timed out connecting to ${this.host}:${this.port}`,
         );
         socket.destroy();
@@ -768,7 +791,7 @@ export class PhotonConnector {
       this.openingSocket = secured;
       let settled = false;
       const timer = setTimeout(() => {
-        const error = new PhotonConnectionError(
+        const error = new ElastiCacheIntegrationsConnectionError(
           `Timed out during TLS handshake to ${this.host}:${this.port}`,
         );
         secured.destroy();
@@ -787,7 +810,7 @@ export class PhotonConnector {
       };
       const onSecureConnect = () => finish(secured);
       const onError = (error: Error) => {
-        const wrapped = new PhotonConnectionError(
+        const wrapped = new ElastiCacheIntegrationsConnectionError(
           `TLS handshake failed to ${this.host}:${this.port}`,
           { cause: error },
         );
@@ -796,9 +819,9 @@ export class PhotonConnector {
       };
       const onClose = () => {
         finish(
-          new PhotonConnectionError(
+          new ElastiCacheIntegrationsConnectionError(
             this.closed
-              ? "PhotonConnector closed during connect()"
+              ? "ElastiCacheIntegrationsConnector closed during connect()"
               : `TLS connection closed during handshake to ${this.host}:${this.port}`,
           ),
         );
@@ -829,11 +852,11 @@ export class PhotonConnector {
     } catch (error) {
       if (this.dead) return;
       const failure =
-        error instanceof PhotonConnectionLost
+        error instanceof ElastiCacheIntegrationsConnectionLost
           ? error
-          : error instanceof PhotonProtocolError
-            ? new PhotonConnectionLost("reply stream corrupt", { cause: error })
-            : new PhotonConnectionLost("socket read failed", { cause: error });
+          : error instanceof ElastiCacheIntegrationsProtocolError
+            ? new ElastiCacheIntegrationsConnectionLost("reply stream corrupt", { cause: error })
+            : new ElastiCacheIntegrationsConnectionLost("socket read failed", { cause: error });
       this.markDead(failure);
     }
   }
@@ -841,17 +864,17 @@ export class PhotonConnector {
   private handlePush(items: RespValue[]): void {
     const [kind] = items;
     if (items.length === 0 || (!Buffer.isBuffer(kind) && typeof kind !== "string")) {
-      throw new PhotonProtocolError("Malformed RESP push payload");
+      throw new ElastiCacheIntegrationsProtocolError("Malformed RESP push payload");
     }
 
     const kindMatches = Buffer.isBuffer(kind)
       ? kind.equals(PUSH_KIND_RESPONSE)
       : kind === PUSH_KIND_RESPONSE.toString("ascii");
     if (!kindMatches) {
-      throw new PhotonProtocolError(`Unknown RESP push kind: ${String(kind)}`);
+      throw new ElastiCacheIntegrationsProtocolError(`Unknown RESP push kind: ${String(kind)}`);
     }
     if (items.length !== 3) {
-      throw new PhotonProtocolError(
+      throw new ElastiCacheIntegrationsProtocolError(
         `Malformed ${PUSH_KIND_RESPONSE.toString("ascii")} push payload`,
       );
     }
@@ -859,7 +882,7 @@ export class PhotonConnector {
     const requestId = items[1];
     const response = items[2]!;
     if (!Buffer.isBuffer(requestId)) {
-      throw new PhotonProtocolError(
+      throw new ElastiCacheIntegrationsProtocolError(
         `Malformed ${PUSH_KIND_RESPONSE.toString("ascii")} push request id`,
       );
     }
@@ -871,7 +894,7 @@ export class PhotonConnector {
     try {
       requestIdKey = STRICT_UTF8.decode(requestId);
     } catch {
-      throw new PhotonProtocolError(
+      throw new ElastiCacheIntegrationsProtocolError(
         `Malformed ${PUSH_KIND_RESPONSE.toString("ascii")} push request id`,
       );
     }
@@ -905,13 +928,13 @@ export class PhotonConnector {
 
   private verifyHelloReply(reply: RespValue): void {
     if (reply instanceof RespError) {
-      this.markDead(new PhotonConnectionLost("HELLO 3 rejected"));
-      throw new PhotonHandshakeRejected(`HELLO 3 rejected: ${reply.code}`);
+      this.markDead(new ElastiCacheIntegrationsConnectionLost("HELLO 3 rejected"));
+      throw new ElastiCacheIntegrationsHandshakeRejected(`HELLO 3 rejected: ${reply.code}`);
     }
     if (!(reply instanceof Map)) {
-      const error = new PhotonConnectionLost("unexpected HELLO 3 reply shape");
+      const error = new ElastiCacheIntegrationsConnectionLost("unexpected HELLO 3 reply shape");
       this.markDead(error);
-      throw new PhotonConnectionError(
+      throw new ElastiCacheIntegrationsConnectionError(
         `HELLO 3 failed: expected a map reply, got ${describeRespType(reply)}`,
       );
     }
@@ -924,9 +947,11 @@ export class PhotonConnector {
       }
     }
     if (protocol !== RESP3_PROTOCOL) {
-      const error = new PhotonConnectionLost("HELLO 3 reply did not confirm RESP3");
+      const error = new ElastiCacheIntegrationsConnectionLost(
+        "HELLO 3 reply did not confirm RESP3",
+      );
       this.markDead(error);
-      throw new PhotonConnectionError(
+      throw new ElastiCacheIntegrationsConnectionError(
         `HELLO 3 failed: reply did not report proto ${RESP3_PROTOCOL}`,
       );
     }
@@ -934,18 +959,20 @@ export class PhotonConnector {
 
   private verifyReauthenticationReply(reply: RespValue): void {
     if (reply instanceof RespError) {
-      throw new PhotonAuthError(`IAM AUTH rejected: ${reply.code}`);
+      throw new ElastiCacheIntegrationsAuthError(`IAM AUTH rejected: ${reply.code}`);
     }
     if (reply === "OK") return;
 
-    this.markDead(new PhotonConnectionLost("unexpected AUTH reply"));
+    this.markDead(new ElastiCacheIntegrationsConnectionLost("unexpected AUTH reply"));
     let replyType: string;
     if (reply === null) replyType = "null";
     else if (Buffer.isBuffer(reply)) replyType = "Buffer";
     else if (Array.isArray(reply)) replyType = "Array";
     else if (typeof reply === "object") replyType = reply.constructor.name;
     else replyType = typeof reply;
-    throw new PhotonAuthError(`IAM AUTH failed: unexpected reply of type ${replyType}`);
+    throw new ElastiCacheIntegrationsAuthError(
+      `IAM AUTH failed: unexpected reply of type ${replyType}`,
+    );
   }
 
   private async authCredentials(): Promise<[string, string]> {
@@ -954,14 +981,14 @@ export class PhotonConnector {
         ? this.authProvider()
         : this.authProvider!.getAuth());
     } catch (error) {
-      throw new PhotonError("AUTH provider failed", { cause: error });
+      throw new ElastiCacheIntegrationsError("AUTH provider failed", { cause: error });
     }
   }
 
   private async waitForResponse(response: Promise<RespValue>, timeout: number): Promise<RespValue> {
     return new Promise<RespValue>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new PhotonTimeoutError(`request timed out after ${timeout}ms`));
+        reject(new ElastiCacheIntegrationsTimeoutError(`request timed out after ${timeout}ms`));
       }, timeout);
 
       response.then(

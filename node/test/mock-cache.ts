@@ -1,11 +1,11 @@
 /**
- * Test doubles for the Photon client suite - all in one place.
+ * Test doubles for the ElastiCacheIntegrations client suite - all in one place.
  *
  * This module holds the authored mock the suite uses:
  *
- * - Reply stands in for the Photon cache response types.
+ * - Reply stands in for the ElastiCacheIntegrations cache response types.
  * - MockCache models the client-to-cache wire contract: the two commands
- *   `photon.config` and `photon.request`, synchronous success replies, and
+ *   `aws.config` and `aws.request`, synchronous success replies, and
  *   error replies. Its pure `handle` method is the contract engine: it
  *   validates command shape, parses `TTL`/`NTTL`, and picks a reply without
  *   doing I/O. The socket server wraps it so a real RESP client can talk to
@@ -66,7 +66,7 @@ function _error(code: string, message: string): Buffer {
   return Buffer.concat([Buffer.from(`-${`${code} ${message}`.trim()}`), CRLF]);
 }
 
-/** A RESP response to `photon.request`. */
+/** A RESP response to `aws.request`. */
 export class Reply {
   readonly frame: Buffer;
 
@@ -98,13 +98,13 @@ export class Reply {
     return new Reply(_simple(Buffer.from(String(id), "ascii")));
   }
 
-  /** An immediate request-id response followed by its photon.response push. */
+  /** An immediate request-id response followed by its aws.response push. */
   static asyncResponse(id: number | bigint, reply = Reply.ok()): Reply {
     return new Reply(
       Buffer.concat([
         _simple(Buffer.from(String(id), "ascii")),
         _push([
-          _bulk(Buffer.from("photon.response", "ascii")),
+          _bulk(Buffer.from("aws.response", "ascii")),
           _bulk(Buffer.from(String(id), "ascii")),
           reply.toBytes(),
         ]),
@@ -113,7 +113,7 @@ export class Reply {
   }
 }
 
-/** The decoded view of one `photon.request` the cache received. */
+/** The decoded view of one `aws.request` the cache received. */
 export interface ReceivedRequest {
   method: Buffer;
   url: Buffer;
@@ -139,26 +139,26 @@ export interface MockCacheOptions {
   failure?: Failure;
   failureCommand?: string; // which command triggers `failure` (e.g. "hello")
   failureAfterReply?: boolean; // reply normally first, then apply `failure`
-  // reply for a no-arg photon.config; undefined = RESP3 null ("unchanged"). Mutable between cycles.
+  // reply for a no-arg aws.config; undefined = RESP3 null ("unchanged"). Mutable between cycles.
   noArgConfigReply?: Record<string, unknown>;
 }
 
 // The certificate and key are checked-in fixtures used by the TLS server.
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** A fake Photon cache server. */
+/** A fake ElastiCacheIntegrations cache server. */
 export class MockCache {
   /**
    * Accepts credentials on `HELLO 3 AUTH`, serves a canned config, and answers each
-   * `photon.request`
+   * `aws.request`
    * with `responseFn(request)`, a fixed `response`, or the default built from
    * `responseStatus`/`responseHeaders`/`responseBody`.
    *
-   * Records everything received (`receivedCommands`, `photonCommandLog`,
+   * Records everything received (`receivedCommands`, `cacheCommandLog`,
    * `requests`). `failure: "hang"` never replies; `failure: "drop"` closes the
    * connection instead of replying. `failureAfterReply` sends the normal reply
    * first and then misbehaves. `failureCommand` selects the command that
-   * triggers it (default `photon.request`; use `"hello"` to break the handshake).
+   * triggers it (default `aws.request`; use `"hello"` to break the handshake).
    *
    * Plaintext by default; `tls: true` serves TLS using the checked-in fixtures.
    */
@@ -169,12 +169,12 @@ export class MockCache {
 
   // Recording, for test assertions.
   readonly receivedCommands: Buffer[][] = [];
-  readonly photonCommandLog: string[] = [];
+  readonly cacheCommandLog: string[] = [];
   readonly requests: ReceivedRequest[] = [];
-  /** One entry per `photon.config`: the parsed overrides object, or `null` for the no-arg form. */
+  /** One entry per `aws.config`: the parsed overrides object, or `null` for the no-arg form. */
   readonly configOverrides: (Record<string, unknown> | null)[] = [];
   /**
-   * Reply for a no-argument `photon.config`; `undefined` means the RESP3 null ("unchanged").
+   * Reply for a no-argument `aws.config`; `undefined` means the RESP3 null ("unchanged").
    * Mutable between refresh cycles so a test can simulate a cache-side config change.
    */
   noArgConfigReply?: Record<string, unknown>;
@@ -226,14 +226,14 @@ export class MockCache {
   }
 
   /**
-   * Raw arg list (command name excluded) of the most recent `photon.request`.
+   * Raw arg list (command name excluded) of the most recent `aws.request`.
    * Returns `[method, url, headers, body, metadata, ...optional TTL/NTTL]`.
    */
   get lastRequestArgs(): Buffer[] | undefined {
     return this.requests.at(-1)?.rawArgs;
   }
 
-  /** The most recent decoded `photon.request` record, or `undefined`. */
+  /** The most recent decoded `aws.request` record, or `undefined`. */
   get lastRequest(): ReceivedRequest | undefined {
     return this.requests.at(-1);
   }
@@ -252,7 +252,7 @@ export class MockCache {
    * Turn one decoded RESP command into the RESP reply frame.
    * Pure: no socket, no threads.
    *
-   * Validates command shape, records the command, parses a `photon.request`
+   * Validates command shape, records the command, parses a `aws.request`
    * including optional `TTL`/`NTTL`, and selects the reply.
    */
   handle(command: Buffer[]): Buffer {
@@ -261,7 +261,7 @@ export class MockCache {
     const args = command.slice(1);
 
     if (name === "hello") {
-      this.photonCommandLog.push(name);
+      this.cacheCommandLog.push(name);
       if (this.helloResponse !== undefined) return this.helloResponse.toBytes();
       if (
         args.length < 1 ||
@@ -289,12 +289,12 @@ export class MockCache {
       return protocol === 3 ? _map(fields) : _array(fields.flat());
     }
     if (name === "auth") {
-      this.photonCommandLog.push(name);
+      this.cacheCommandLog.push(name);
       if (args.length !== 2) return _error("ERR", `wrong number of arguments for AUTH`);
       return this.authResponse?.toBytes() ?? _simple(Buffer.from("OK"));
     }
     if (name === CONFIG_COMMAND) {
-      this.photonCommandLog.push(name);
+      this.cacheCommandLog.push(name);
       if (args.length > 1) {
         return _error("CONFIG_INVALID", `expected 0 or 1 args, got ${args.length}`);
       }
@@ -314,9 +314,9 @@ export class MockCache {
       return _bulk(Buffer.from(JSON.stringify(this.config)));
     }
     if (name === REQUEST_COMMAND) {
-      this.photonCommandLog.push(name);
+      this.cacheCommandLog.push(name);
       if (args.length < 5) {
-        return _error("ERR", `malformed photon.request: ${args.length} args (need >= 5)`);
+        return _error("ERR", `malformed aws.request: ${args.length} args (need >= 5)`);
       }
       const parsed = this.parseRequest(args);
       this.requests.push(parsed);
@@ -418,7 +418,7 @@ export class MockCache {
           if (this.failureAfterReply) socket.write(this.handle(args));
           else {
             this.receivedCommands.push(args);
-            this.photonCommandLog.push(name);
+            this.cacheCommandLog.push(name);
           }
           if (this.failure === "drop") socket.destroy();
           else hung = true;
@@ -433,7 +433,7 @@ export class MockCache {
   sendPush(
     requestId: number | bigint,
     reply = Reply.ok(),
-    kind = Buffer.from("photon.response", "ascii"),
+    kind = Buffer.from("aws.response", "ascii"),
     kindEncoding: "bulk" | "simple" = "bulk",
   ): void {
     const socket = this.onlySocket();

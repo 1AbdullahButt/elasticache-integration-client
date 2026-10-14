@@ -7,23 +7,27 @@ import type { DeserializeHandler, FinalizeHandler, SerializeHandler } from "@smi
 import { Readable } from "node:stream";
 
 import {
-  PhotonCacheUnavailable,
-  PhotonConnectionLost,
-  PhotonError,
-  PhotonProtocolError,
-  PhotonRejectedError,
-  PhotonTimeoutError,
+  ElastiCacheIntegrationsCacheUnavailable,
+  ElastiCacheIntegrationsConnectionLost,
+  ElastiCacheIntegrationsError,
+  ElastiCacheIntegrationsProtocolError,
+  ElastiCacheIntegrationsRejectedError,
+  ElastiCacheIntegrationsTimeoutError,
 } from "../src/errors.js";
-import { PhotonRequest, PhotonResponse, RequestMetadata } from "../src/models.js";
 import {
-  awsToPhotonRequest,
-  installPhotonMiddleware,
-  PhotonHandle,
-  photonToHttpResponse,
-  photonMiddleware,
+  ElastiCacheIntegrationsRequest,
+  ElastiCacheIntegrationsResponse,
+  RequestMetadata,
+} from "../src/models.js";
+import {
+  awsToCacheRequest,
+  installCacheMiddleware,
+  ElastiCacheIntegrationsHandle,
+  cacheToHttpResponse,
+  cacheMiddleware,
 } from "../src/middleware.js";
-import { PhotonSession } from "../src/session.js";
-import type { PhotonConnector } from "../src/connection.js";
+import { ElastiCacheIntegrationsSession } from "../src/session.js";
+import type { ElastiCacheIntegrationsConnector } from "../src/connection.js";
 
 const request = (body?: unknown) =>
   new HttpRequest({
@@ -37,41 +41,45 @@ const request = (body?: unknown) =>
     body,
   });
 
-function fakeSession(overrides: Partial<PhotonSession> & { isOpen?: boolean } = {}): PhotonSession {
+function fakeSession(
+  overrides: Partial<ElastiCacheIntegrationsSession> & { isOpen?: boolean } = {},
+): ElastiCacheIntegrationsSession {
   return {
     isOpen: true,
     isConnectionHealthy: true,
-    request: vi.fn(async () => new PhotonResponse({ statusCode: 200 })),
+    request: vi.fn(async () => new ElastiCacheIntegrationsResponse({ statusCode: 200 })),
     destroy: vi.fn(),
     ...overrides,
-  } as PhotonSession;
+  } as ElastiCacheIntegrationsSession;
 }
 
-/** A minimal PhotonConnector double for real-session recovery tests. */
-function fakeConnector(overrides: Partial<PhotonConnector> = {}): PhotonConnector {
+/** A minimal ElastiCacheIntegrationsConnector double for real-session recovery tests. */
+function fakeConnector(
+  overrides: Partial<ElastiCacheIntegrationsConnector> = {},
+): ElastiCacheIntegrationsConnector {
   return {
     isReady: true,
     connect: vi.fn(async () => undefined),
     handshake: vi.fn(async () => undefined),
     execute: vi.fn(async (command: string) =>
-      command === "photon.config"
+      command === "aws.config"
         ? Buffer.from('{"refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}')
         : undefined,
     ),
     close: vi.fn(async () => undefined),
     destroy: vi.fn(() => undefined),
     ...overrides,
-  } as unknown as PhotonConnector;
+  } as unknown as ElastiCacheIntegrationsConnector;
 }
 
-describe("awsToPhotonRequest", () => {
+describe("awsToCacheRequest", () => {
   it("preserves the final serialized unsigned Smithy request and explicit service metadata", () => {
     const smithyRequest = request(Buffer.from("payload"));
 
-    const photonRequest = awsToPhotonRequest(smithyRequest, "dynamodb", "GetItemCommand")!;
+    const cacheRequest = awsToCacheRequest(smithyRequest, "dynamodb", "GetItemCommand")!;
 
-    expect(photonRequest).toEqual(
-      new PhotonRequest({
+    expect(cacheRequest).toEqual(
+      new ElastiCacheIntegrationsRequest({
         method: "POST",
         url: formatUrl(smithyRequest),
         headers: { ...smithyRequest.headers },
@@ -79,10 +87,10 @@ describe("awsToPhotonRequest", () => {
         metadata: new RequestMetadata({ service: "dynamodb", operation: "GetItem" }),
       }),
     );
-    expect(photonRequest.url).toBe(
+    expect(cacheRequest.url).toBe(
       "https://dynamodb.us-east-1.amazonaws.com:8443/?filter=a%20b&page=2",
     );
-    expect(photonRequest.headers).not.toBe(smithyRequest.headers);
+    expect(cacheRequest.headers).not.toBe(smithyRequest.headers);
   });
 
   it("strips volatile authentication headers but retains content hash", () => {
@@ -103,9 +111,9 @@ describe("awsToPhotonRequest", () => {
       body: Buffer.from("payload"),
     });
 
-    const photonRequest = awsToPhotonRequest(signed, "dynamodb", "GetItemCommand")!;
+    const cacheRequest = awsToCacheRequest(signed, "dynamodb", "GetItemCommand")!;
 
-    expect(photonRequest.headers).toEqual({
+    expect(cacheRequest.headers).toEqual({
       host: "dynamodb.us-east-1.amazonaws.com",
       "content-type": "application/x-amz-json-1.0",
       "x-amz-target": "DynamoDB_20120810.GetItem",
@@ -122,13 +130,13 @@ describe("awsToPhotonRequest", () => {
     [new Uint8Array([112, 97, 121, 108, 111, 97, 100]), Buffer.from("payload")],
     [new Uint8Array(), Buffer.alloc(0)],
   ])("normalizes %s request bodies", (body, expected) => {
-    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")!.body).toEqual(expected);
+    expect(awsToCacheRequest(request(body), "svc", "RunCommand")!.body).toEqual(expected);
   });
 
   it("reuses Buffer request bodies", () => {
     const body = Buffer.from("payload");
 
-    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")!.body).toBe(body);
+    expect(awsToCacheRequest(request(body), "svc", "RunCommand")!.body).toBe(body);
   });
 
   it.each([
@@ -139,30 +147,36 @@ describe("awsToPhotonRequest", () => {
     ["0", 0],
     ["false", false],
   ])("declines an uncarriable %s request body", (_name, body) => {
-    expect(awsToPhotonRequest(request(body), "svc", "RunCommand")).toBeUndefined();
+    expect(awsToCacheRequest(request(body), "svc", "RunCommand")).toBeUndefined();
   });
 
   it("rejects a non-Smithy request", () => {
-    expect(() => awsToPhotonRequest({}, "svc", "RunCommand")).toThrow(PhotonError);
+    expect(() => awsToCacheRequest({}, "svc", "RunCommand")).toThrow(ElastiCacheIntegrationsError);
   });
 
   it("rejects missing command metadata", () => {
-    expect(() => awsToPhotonRequest(request(), "svc", "")).toThrow(PhotonError);
-    expect(() => awsToPhotonRequest(request(), "svc", undefined)).toThrow(PhotonError);
+    expect(() => awsToCacheRequest(request(), "svc", "")).toThrow(ElastiCacheIntegrationsError);
+    expect(() => awsToCacheRequest(request(), "svc", undefined)).toThrow(
+      ElastiCacheIntegrationsError,
+    );
   });
 
   it.each([
     ["GetItemCommand", "GetItem"],
     ["Custom", "Custom"],
   ])("derives operation %s as %s", (commandName, operation) => {
-    expect(awsToPhotonRequest(request(), "svc", commandName)!.metadata.operation).toBe(operation);
+    expect(awsToCacheRequest(request(), "svc", commandName)!.metadata.operation).toBe(operation);
   });
 });
 
-describe("photonToHttpResponse", () => {
-  it("converts a Photon response to a Smithy response", () => {
-    const result = photonToHttpResponse(
-      new PhotonResponse({ statusCode: 201, headers: { etag: "abc" }, body: Buffer.from("ok") }),
+describe("cacheToHttpResponse", () => {
+  it("converts a ElastiCacheIntegrations response to a Smithy response", () => {
+    const result = cacheToHttpResponse(
+      new ElastiCacheIntegrationsResponse({
+        statusCode: 201,
+        headers: { etag: "abc" },
+        body: Buffer.from("ok"),
+      }),
     );
 
     expect(result).toBeInstanceOf(HttpResponse);
@@ -172,25 +186,25 @@ describe("photonToHttpResponse", () => {
   });
 });
 
-describe("PhotonHandle", () => {
-  it("installs during construction and makes client destroy tear Photon down first", () => {
+describe("ElastiCacheIntegrationsHandle", () => {
+  it("installs during construction and makes client destroy tear ElastiCacheIntegrations down first", () => {
     const order: string[] = [];
     const session = fakeSession({
-      destroy: vi.fn(() => order.push("photon")),
+      destroy: vi.fn(() => order.push("elastiCacheIntegrations")),
     });
     const sdkClient = {
       middlewareStack: constructStack<object, object>(),
       destroy: vi.fn(() => order.push("sdk")),
     };
-    const handle = new PhotonHandle(sdkClient, session, "svc");
+    const handle = new ElastiCacheIntegrationsHandle(sdkClient, session, "svc");
 
     sdkClient.destroy();
     sdkClient.destroy();
 
-    expect(order).toEqual(["photon", "sdk"]);
+    expect(order).toEqual(["elastiCacheIntegrations", "sdk"]);
     expect(handle.installed).toBe(false);
     expect(session.destroy).toHaveBeenCalledOnce();
-    expect(sdkClient.middlewareStack.remove("photon")).toBe(false);
+    expect(sdkClient.middlewareStack.remove("elastiCacheIntegrations")).toBe(false);
   });
 
   it("tears down once when concurrent async callers destroy the client", async () => {
@@ -200,7 +214,7 @@ describe("PhotonHandle", () => {
       middlewareStack: constructStack<object, object>(),
       destroy: originalDestroy,
     };
-    const handle = new PhotonHandle(sdkClient, session, "svc");
+    const handle = new ElastiCacheIntegrationsHandle(sdkClient, session, "svc");
     await Promise.all(
       Array.from({ length: 32 }, () => Promise.resolve().then(() => sdkClient.destroy())),
     );
@@ -210,14 +224,14 @@ describe("PhotonHandle", () => {
     expect(handle.installed).toBe(false);
   });
 
-  it("shutdown detaches Photon without destroying the SDK client", () => {
+  it("shutdown detaches ElastiCacheIntegrations without destroying the SDK client", () => {
     const session = fakeSession();
     const originalDestroy = vi.fn();
     const sdkClient = {
       middlewareStack: constructStack<object, object>(),
       destroy: originalDestroy,
     };
-    const handle = new PhotonHandle(sdkClient, session, "svc");
+    const handle = new ElastiCacheIntegrationsHandle(sdkClient, session, "svc");
 
     handle.shutdown();
     handle.shutdown();
@@ -230,7 +244,7 @@ describe("PhotonHandle", () => {
   });
 });
 
-describe("photon middleware", () => {
+describe("elastiCacheIntegrations middleware", () => {
   it("passes predicate declines through to the untouched origin request", async () => {
     const signedRequest = request(Buffer.from("{}"));
     signedRequest.headers.authorization = "AWS4-HMAC-SHA256 Credential=example";
@@ -242,7 +256,7 @@ describe("photon middleware", () => {
       );
       return { response: new HttpResponse({ statusCode: 204 }) };
     });
-    const handler = photonMiddleware("svc", session)(next, { commandName: "RunCommand" });
+    const handler = cacheMiddleware("svc", session)(next, { commandName: "RunCommand" });
 
     await expect(handler({ input: {}, request: signedRequest })).resolves.toEqual({
       response: expect.any(HttpResponse),
@@ -260,13 +274,13 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("svc", session)(next, { commandName: "RunCommand" });
+    const handler = cacheMiddleware("svc", session)(next, { commandName: "RunCommand" });
 
     await expect(handler({ input: {}, request: request() })).rejects.toBe(sessionError);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("passes a streaming request body through to the origin without calling Photon", async () => {
+  it("passes a streaming request body through to the origin without calling ElastiCacheIntegrations", async () => {
     const body = Readable.from(["payload"]);
     const streamingRequest = request(body);
     const session = fakeSession();
@@ -274,7 +288,7 @@ describe("photon middleware", () => {
       expect(args.request).toBe(streamingRequest);
       return { response: new HttpResponse({ statusCode: 200 }) };
     });
-    const handler = photonMiddleware("s3", session)(next, { commandName: "PutObjectCommand" });
+    const handler = cacheMiddleware("s3", session)(next, { commandName: "PutObjectCommand" });
 
     await expect(handler({ input: {}, request: streamingRequest })).resolves.toEqual({
       response: expect.any(HttpResponse),
@@ -284,21 +298,21 @@ describe("photon middleware", () => {
     expect(body.readableDidRead).toBe(false);
   });
 
-  it("does not pass Photon request validation failures through to the origin", async () => {
+  it("does not pass ElastiCacheIntegrations request validation failures through to the origin", async () => {
     const session = fakeSession();
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("svc", session)(next, {});
+    const handler = cacheMiddleware("svc", session)(next, {});
 
     await expect(handler({ input: {}, request: request() })).rejects.toThrow(
-      "Malformed Photon middleware command metadata",
+      "Malformed ElastiCacheIntegrations middleware command metadata",
     );
     expect(session.request).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("passes a dropped idempotent Photon request through to the origin", async () => {
+  it("passes a dropped idempotent ElastiCacheIntegrations request through to the origin", async () => {
     const signedRequest = new HttpRequest({
       protocol: "https:",
       hostname: "dynamodb.us-east-1.amazonaws.com",
@@ -314,7 +328,7 @@ describe("photon middleware", () => {
     const session = fakeSession({
       isConnectionHealthy: false,
       request: vi.fn(async () => {
-        throw new PhotonTimeoutError("cache unavailable");
+        throw new ElastiCacheIntegrationsTimeoutError("cache unavailable");
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async (args) => {
@@ -325,7 +339,7 @@ describe("photon middleware", () => {
       expect((args.request as HttpRequest).headers["x-amz-date"]).toBe("20260812T000000Z");
       return { response: new HttpResponse({ statusCode: 503 }) };
     });
-    const handler = photonMiddleware("dynamodb", session)(next, { commandName: "GetItemCommand" });
+    const handler = cacheMiddleware("dynamodb", session)(next, { commandName: "GetItemCommand" });
 
     await expect(handler({ input: {}, request: signedRequest })).resolves.toEqual({
       response: expect.any(HttpResponse),
@@ -333,8 +347,8 @@ describe("photon middleware", () => {
     expect(next).toHaveBeenCalledOnce();
   });
 
-  it("does not pass shutdown Photon failures through to the origin", async () => {
-    const connectionClosed = new PhotonConnectionLost("connection closed");
+  it("does not pass shutdown ElastiCacheIntegrations failures through to the origin", async () => {
+    const connectionClosed = new ElastiCacheIntegrationsConnectionLost("connection closed");
     const session = fakeSession({
       isOpen: false,
       request: vi.fn(async () => {
@@ -344,7 +358,7 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
@@ -353,7 +367,7 @@ describe("photon middleware", () => {
   });
 
   it("propagates fallback-window exhaustion without calling origin", async () => {
-    const unavailable = new PhotonCacheUnavailable("https://x/");
+    const unavailable = new ElastiCacheIntegrationsCacheUnavailable("https://x/");
     const session = fakeSession({
       request: vi.fn(async () => {
         throw unavailable;
@@ -362,7 +376,7 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("svc", session)(next, {
+    const handler = cacheMiddleware("svc", session)(next, {
       commandName: "RunCommand",
     });
 
@@ -373,7 +387,7 @@ describe("photon middleware", () => {
   it("falls back to the origin while stale config triggers recovery", async () => {
     let clock = 0;
     const connector = fakeConnector();
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       connector,
       {},
       {
@@ -382,7 +396,9 @@ describe("photon middleware", () => {
       },
     );
     await session.open();
-    vi.mocked(connector.execute).mockRejectedValue(new PhotonError("photon.config failed"));
+    vi.mocked(connector.execute).mockRejectedValue(
+      new ElastiCacheIntegrationsError("aws.config failed"),
+    );
     clock = 1000;
     // Drive staleness recovery exactly as Refresher would, without waiting on real timers.
     await (session as unknown as { refreshOnce: () => Promise<void> }).refreshOnce();
@@ -392,8 +408,8 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => ({
       response: new HttpResponse({ statusCode: 200 }),
     }));
-    // Idempotency does not matter here: the request has not reached Photon while reconnecting.
-    const handler = photonMiddleware("svc", session)(next, { commandName: "RunCommand" });
+    // Idempotency does not matter here: the request has not reached ElastiCacheIntegrations while reconnecting.
+    const handler = cacheMiddleware("svc", session)(next, { commandName: "RunCommand" });
 
     await expect(handler({ input: {}, request: request() })).resolves.toEqual({
       response: expect.any(HttpResponse),
@@ -408,15 +424,15 @@ describe("photon middleware", () => {
    * moment stale config starts recovery, so closing the connector rejects that request.
    */
   async function staleRaceSession(): Promise<{
-    session: PhotonSession;
-    connectionLost: PhotonConnectionLost;
+    session: ElastiCacheIntegrationsSession;
+    connectionLost: ElastiCacheIntegrationsConnectionLost;
     goStale: () => Promise<void>;
   }> {
     let clock = 0;
     let rejectRequest!: (error: unknown) => void;
-    const connectionLost = new PhotonConnectionLost("connection closed");
+    const connectionLost = new ElastiCacheIntegrationsConnectionLost("connection closed");
     const connector = fakeConnector();
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       connector,
       {},
       {
@@ -426,8 +442,8 @@ describe("photon middleware", () => {
     );
     await session.open();
     vi.mocked(connector.execute).mockImplementation((command: string) => {
-      if (command === "photon.config")
-        return Promise.reject(new PhotonError("photon.config failed"));
+      if (command === "aws.config")
+        return Promise.reject(new ElastiCacheIntegrationsError("aws.config failed"));
       return new Promise((_resolve, reject) => {
         rejectRequest = reject;
       });
@@ -453,7 +469,7 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => ({
       response: new HttpResponse({ statusCode: 200 }),
     }));
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
@@ -470,7 +486,7 @@ describe("photon middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "PutItemCommand",
     });
 
@@ -482,147 +498,159 @@ describe("photon middleware", () => {
     await session.close();
   });
 
-  it("does not replay non-idempotent Photon failures at the origin", async () => {
-    const photonError = new PhotonTimeoutError("cache unavailable");
+  it("does not replay non-idempotent ElastiCacheIntegrations failures at the origin", async () => {
+    const cacheError = new ElastiCacheIntegrationsTimeoutError("cache unavailable");
     const session = fakeSession({
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "UpdateItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
     expect(next).not.toHaveBeenCalled();
   });
 
   it("does not mark a nominally healthy connection-loss error retryable", async () => {
-    const photonError = new PhotonConnectionLost("socket died");
+    const cacheError = new ElastiCacheIntegrationsConnectionLost("socket died");
     const session = fakeSession({
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
-    expect((photonError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+    expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
     expect(next).not.toHaveBeenCalled();
   });
 
   it("returns non-origin RESP rejections without contacting origin", async () => {
-    const photonError = new PhotonRejectedError("UNSUPPORTED", "cache rejected request");
+    const cacheError = new ElastiCacheIntegrationsRejectedError(
+      "UNSUPPORTED",
+      "cache rejected request",
+    );
     const session = fakeSession({
       isConnectionHealthy: false,
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
     expect(next).not.toHaveBeenCalled();
   });
 
   it("marks an idempotent ORIGIN_ERROR retryable without contacting origin", async () => {
-    const photonError = new PhotonRejectedError("ORIGIN_ERROR", "origin unavailable");
+    const cacheError = new ElastiCacheIntegrationsRejectedError(
+      "ORIGIN_ERROR",
+      "origin unavailable",
+    );
     const session = fakeSession({
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
     const failure = await handler({ input: {}, request: request() }).catch(
       (error: unknown) => error,
     );
-    expect(failure).toBe(photonError);
+    expect(failure).toBe(cacheError);
     expect((failure as Error & { $retryable?: object }).$retryable).toEqual({});
     expect(next).not.toHaveBeenCalled();
   });
 
   it("returns a non-idempotent ORIGIN_ERROR without retry or fallback", async () => {
-    const photonError = new PhotonRejectedError("ORIGIN_ERROR", "origin unavailable");
+    const cacheError = new ElastiCacheIntegrationsRejectedError(
+      "ORIGIN_ERROR",
+      "origin unavailable",
+    );
     const session = fakeSession({
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "UpdateItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
-    expect((photonError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+    expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("does not replay a non-idempotent malformed Photon response", async () => {
-    const photonError = new PhotonProtocolError("malformed response");
+  it("does not replay a non-idempotent malformed ElastiCacheIntegrations response", async () => {
+    const cacheError = new ElastiCacheIntegrationsProtocolError("malformed response");
     const session = fakeSession({
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "UpdateItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("does not retry an idempotent malformed Photon response", async () => {
-    const photonError = new PhotonProtocolError("malformed response");
+  it("does not retry an idempotent malformed ElastiCacheIntegrations response", async () => {
+    const cacheError = new ElastiCacheIntegrationsProtocolError("malformed response");
     const session = fakeSession({
       isConnectionHealthy: false,
       request: vi.fn(async () => {
-        throw photonError;
+        throw cacheError;
       }),
     });
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = photonMiddleware("dynamodb", session)(next, {
+    const handler = cacheMiddleware("dynamodb", session)(next, {
       commandName: "GetItemCommand",
     });
 
-    await expect(handler({ input: {}, request: request() })).rejects.toBe(photonError);
-    expect((photonError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+    expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
     expect(next).not.toHaveBeenCalled();
   });
 
   it("runs after final serialization and returns through the deserializer", async () => {
     const session = fakeSession({
-      request: vi.fn(async (photonRequest: PhotonRequest) => {
-        expect(photonRequest.headers.authorization).toBeUndefined();
-        expect(photonRequest.headers["x-amz-date"]).toBeUndefined();
-        return new PhotonResponse({ statusCode: 200, body: Buffer.from("cached") });
+      request: vi.fn(async (cacheRequest: ElastiCacheIntegrationsRequest) => {
+        expect(cacheRequest.headers.authorization).toBeUndefined();
+        expect(cacheRequest.headers["x-amz-date"]).toBeUndefined();
+        return new ElastiCacheIntegrationsResponse({
+          statusCode: 200,
+          body: Buffer.from("cached"),
+        });
       }),
     });
     const clientStack = constructStack<object, { value: string }>();
@@ -658,7 +686,7 @@ describe("photon middleware", () => {
       name: "deserializerMiddleware",
       step: "deserialize",
     });
-    installPhotonMiddleware({ middlewareStack: clientStack }, "svc", session);
+    installCacheMiddleware({ middlewareStack: clientStack }, "svc", session);
     const stack = clientStack.concat(commandStack);
 
     const result = await stack.resolve(origin, { commandName: "GetItemCommand" })({ input: {} });

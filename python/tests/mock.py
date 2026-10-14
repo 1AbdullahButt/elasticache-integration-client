@@ -1,13 +1,13 @@
-"""Test doubles for the Photon client suite — all in one place.
+"""Test doubles for the ElastiCacheIntegrations client suite — all in one place.
 
 This module holds the three authored mock classes the suite uses:
 
 * :class:`MockCache` — stands in for the ElastiCache Serverless cache. It models the **client↔cache
-  wire contract**: the two commands ``photon.config`` and ``photon.request``, the synchronous
+  wire contract**: the two commands ``aws.config`` and ``aws.request``, the synchronous
   success reply, and the error reply. A pure :meth:`MockCache.handle` method *is* the contract
   engine (validates command shape, picks a reply) and does no I/O, so it
   is unit-testable without a socket. A small synchronous, threaded TLS server wraps it so the real
-  :class:`~photon.connection.PhotonConnector` can talk to it over verifying TLS.
+  :class:`~elasticache_integrations.connection.ElastiCacheIntegrationsConnector` can talk to it over verifying TLS.
 * :class:`MockSocket` — an in-memory, scriptable socket for ``_SocketReader`` unit tests.
 * :class:`MockClient` — a botocore client stand-in exposing the ``.meta.events`` emitter.
 
@@ -32,15 +32,15 @@ from unittest.mock import create_autospec
 
 from botocore.hooks import HierarchicalEmitter
 
-from photon.connection import PhotonConnector
-from photon.models import PhotonResponse, RequestMetadata
-from photon.protocol import PUSH_KIND_RESPONSE
-from photon.session import PhotonSession
+from elasticache_integrations.connection import ElastiCacheIntegrationsConnector
+from elasticache_integrations.models import ElastiCacheIntegrationsResponse, RequestMetadata
+from elasticache_integrations.protocol import PUSH_KIND_RESPONSE
+from elasticache_integrations.session import ElastiCacheIntegrationsSession
 
 _CRLF = b"\r\n"
 
 # The resolved config the real proxy returns for empty overrides — see
-# ElastiCacheProxyRust/src/libproxy/photon/config.rs::resolve. One CEL predicate caching every
+# ElastiCacheProxyRust/src/libproxy/elasticache_integrations/config.rs::resolve. One CEL predicate caching every
 # supported read regardless of table; `version` is the predicate *format* version ("1.0", constant).
 DEFAULT_RESOLVED_CONFIG = {
     "version": "1.0",
@@ -153,7 +153,7 @@ def _push(items: list[bytes]) -> bytes:
 # --------------------------------------------------------------------------- #
 @dataclass
 class Reply:
-    """A RESP response to ``photon.request``."""
+    """A RESP response to ``aws.request``."""
 
     frame: bytes
 
@@ -178,7 +178,7 @@ class Reply:
     @classmethod
     def push_response(cls, request_id: int, reply: "Reply | None" = None) -> "Reply":
         """An out-of-band exchange: the request id as a simple string, immediately followed
-        by the ``photon.response`` push carrying ``reply`` (default :meth:`ok`) for that id."""
+        by the ``aws.response`` push carrying ``reply`` (default :meth:`ok`) for that id."""
         reply = reply or cls.ok()
         return cls(
             _simple_string(str(request_id).encode())
@@ -197,7 +197,7 @@ class Reply:
 # --------------------------------------------------------------------------- #
 @dataclass
 class ReceivedRequest:
-    """The decoded view of one ``photon.request`` the cache received."""
+    """The decoded view of one ``aws.request`` the cache received."""
 
     method: bytes
     url: bytes
@@ -278,18 +278,18 @@ def _read_command(rfile) -> list[bytes] | None:
 
 
 class MockCache:
-    """A fake Photon cache server.
+    """A fake ElastiCacheIntegrations cache server.
 
-    Accepts any AUTH, answers ``HELLO 3`` with a RESP3 map, serves a canned config, and answers each ``photon.request`` with
+    Accepts any AUTH, answers ``HELLO 3`` with a RESP3 map, serves a canned config, and answers each ``aws.request`` with
     ``response_fn(request)``, a fixed ``response``, or the default built from
     ``response_status``/``response_headers``/``response_body``
-    Records everything received (``received_commands``, ``photon_command_log``, ``requests``).
+    Records everything received (``received_commands``, ``cache_command_log``, ``requests``).
 
     ``failure="hang"`` never replies; ``failure="drop"`` closes the connection instead of
     replying. ``failure_after_reply=True`` sends the normal reply first and *then* misbehaves —
     e.g. with ``failure="drop"`` the reply and the connection close arrive back-to-back.
     ``failure_command`` picks the command that triggers it (default
-    ``photon.request``; use ``"auth"`` or ``"hello"`` to break the handshake).
+    ``aws.request``; use ``"auth"`` or ``"hello"`` to break the handshake).
 
     Plaintext by default; ``tls=True`` serves verifying TLS — trust it via ``ca_certs=cache.cert_path``.
 
@@ -310,9 +310,9 @@ class MockCache:
         response: Reply | None = None,
         response_fn: Callable[[ReceivedRequest], Reply] | None = None,
         failure: str | None = None,
-        failure_command: str = "photon.request",  # which command triggers `failure` (e.g. "auth")
+        failure_command: str = "aws.request",  # which command triggers `failure` (e.g. "auth")
         failure_after_reply: bool = False,  # reply normally first, then apply `failure`
-        no_arg_config_reply: dict | None = None,  # reply for no-arg photon.config; None = RESP3
+        no_arg_config_reply: dict | None = None,  # reply for no-arg aws.config; None = RESP3
         # null ("unchanged"). Mutable between ticks.
     ) -> None:
         self._config = config or DEFAULT_RESOLVED_CONFIG
@@ -331,9 +331,11 @@ class MockCache:
 
         # Recording, for test assertions.
         self.received_commands: list[list[bytes]] = []  # every command, full arg list incl. name
-        self.photon_command_log: list[str] = []  # names of auth/photon.* commands, in order
-        self.requests: list[ReceivedRequest] = []  # decoded photon.request records, in order
-        self.config_overrides: list[dict | None] = []  # decoded photon.config overrides, in order
+        self.cache_command_log: list[
+            str
+        ] = []  # names of auth/elasticache_integrations.* commands, in order
+        self.requests: list[ReceivedRequest] = []  # decoded aws.request records, in order
+        self.config_overrides: list[dict | None] = []  # decoded aws.config overrides, in order
         self.protocol_errors: list[str] = []  # RESP framing violations by the client, in order
 
         # Server state.
@@ -348,7 +350,7 @@ class MockCache:
         self._key_path: str | None = None
 
     def set_config(self, config: dict) -> None:
-        """Answer later ``photon.config`` exchanges with ``config``.
+        """Answer later ``aws.config`` exchanges with ``config``.
 
         Lets a test change what the cache resolves between connections — a reconnect picks up the new
         one — without reaching into the mock's internals.
@@ -362,23 +364,23 @@ class MockCache:
 
     @property
     def last_request_args(self) -> list[bytes] | None:
-        """Raw arg list (command name excluded) of the most recent ``photon.request``.
+        """Raw arg list (command name excluded) of the most recent ``aws.request``.
 
         Returns ``[method, url, headers, body, metadata]`` or ``None`` if no
-        ``photon.request`` has been received. Lets a test assert exactly what the client shipped.
+        ``aws.request`` has been received. Lets a test assert exactly what the client shipped.
         """
         return self.requests[-1].raw_args if self.requests else None
 
     @property
     def last_request(self) -> ReceivedRequest | None:
-        """The most recent decoded ``photon.request`` record, or ``None``."""
+        """The most recent decoded ``aws.request`` record, or ``None``."""
         return self.requests[-1] if self.requests else None
 
     # --- pure contract engine (no I/O) ---------------------------------------
     def handle(self, command: list[bytes]) -> bytes:
         """Turn one decoded RESP command into the RESP reply frame. Pure: no socket, no threads.
 
-        Validates command shape, records the command, parses a ``photon.request``, and selects
+        Validates command shape, records the command, parses a ``aws.request``, and selects
         the reply. Returns RESP bytes ready to send.
         """
         self.received_commands.append(command)
@@ -386,12 +388,12 @@ class MockCache:
         args = command[1:]
 
         if name == "auth":
-            self.photon_command_log.append(name)
+            self.cache_command_log.append(name)
             # Accept any credentials — this is a test mock.
             return b"+OK\r\n"
 
         if name == "hello":
-            self.photon_command_log.append(name)
+            self.cache_command_log.append(name)
             # HELLO <protover> [AUTH <user> <token>]: any credentials are accepted, as with AUTH.
             # The reply echoes the version asked for, encoded in it: a map for RESP3, array for RESP2.
             if not args or args[0] not in (b"2", b"3"):
@@ -413,8 +415,8 @@ class MockCache:
                 return _array([item for pair in fields for item in pair])
             return _map(fields)
 
-        if name == "photon.config":
-            self.photon_command_log.append(name)
+        if name == "aws.config":
+            self.cache_command_log.append(name)
             if len(args) == 0:
                 self.config_overrides.append(None)
                 if self.no_arg_config_reply is None:
@@ -431,15 +433,15 @@ class MockCache:
             self.config_overrides.append(overrides)
             return _bulk(json.dumps(self._config).encode("utf-8"))
 
-        if name == "photon.request":
-            self.photon_command_log.append(name)
+        if name == "aws.request":
+            self.cache_command_log.append(name)
             # Exactly 5 args: method, url, headers, body, metadata. The real cache
             # rejects any other count with -PARSE_ERROR.
             if len(args) != 5:
-                return _error(CODE_PARSE_ERROR, "failed to parse photon.request")
+                return _error(CODE_PARSE_ERROR, "failed to parse aws.request")
             metadata = self._parse_metadata(args[4])
             if metadata is None:
-                return _error(CODE_PARSE_ERROR, "failed to parse photon.request")
+                return _error(CODE_PARSE_ERROR, "failed to parse aws.request")
             parsed = self._parse_request(args, metadata)
             self.requests.append(parsed)
             return self._reply_for(parsed).to_bytes()
@@ -469,7 +471,7 @@ class MockCache:
 
     @staticmethod
     def _parse_request(args: list[bytes], metadata: RequestMetadata) -> ReceivedRequest:
-        """Decode the 5 mandatory args of a ``photon.request``."""
+        """Decode the 5 mandatory args of a ``aws.request``."""
         method, url, headers, body, _raw_metadata = args
         return ReceivedRequest(
             method=method,
@@ -589,12 +591,12 @@ class MockCache:
                         sock.sendall(self.handle(command))
                     else:
                         # Record the command (other commands still succeed normally), then
-                        # misbehave. A well-formed photon.request is also parsed into
+                        # misbehave. A well-formed aws.request is also parsed into
                         # ``requests`` — a failure test asserting on last_request must see
                         # the request that triggered the failure, not the previous one.
                         self.received_commands.append(command)
-                        self.photon_command_log.append(name)
-                        if name == "photon.request" and len(command) == 6:
+                        self.cache_command_log.append(name)
+                        if name == "aws.request" and len(command) == 6:
                             metadata = self._parse_metadata(command[5])
                             if metadata is not None:
                                 self.requests.append(self._parse_request(command[1:], metadata))
@@ -784,15 +786,15 @@ class MockClient:
 # --------------------------------------------------------------------------- #
 # Autospec doubles for the layers above the cache
 # --------------------------------------------------------------------------- #
-def mock_connector() -> PhotonConnector:
-    """A ``create_autospec(PhotonConnector)`` double with sensible default replies.
+def mock_connector() -> ElastiCacheIntegrationsConnector:
+    """A ``create_autospec(ElastiCacheIntegrationsConnector)`` double with sensible default replies.
 
     Bound to the real class, so the session is verified against the real connector signatures
     without a network. ``execute`` returns wire-shaped ``RespValue``s (the session does the
-    parsing): a JSON bulk string for ``photon.config``, a ``[status, headers, body]`` array
+    parsing): a JSON bulk string for ``aws.config``, a ``[status, headers, body]`` array
     otherwise. Override ``execute.side_effect``/``return_value`` in the test as needed.
     """
-    conn = create_autospec(PhotonConnector, instance=True)
+    conn = create_autospec(ElastiCacheIntegrationsConnector, instance=True)
     # config_timeout is an instance attribute, which autospec leaves as a bare Mock; the session
     # passes it as a timeout, so it has to be a real number.
     conn.config_timeout = 2.0
@@ -800,7 +802,7 @@ def mock_connector() -> PhotonConnector:
     conn.is_alive = True
 
     def _execute(command, *args, timeout=None):
-        if command == "photon.config":
+        if command == "aws.config":
             if not args:
                 return None
             return json.dumps(DEFAULT_RESOLVED_CONFIG).encode()
@@ -810,10 +812,12 @@ def mock_connector() -> PhotonConnector:
     return conn
 
 
-def mock_session() -> PhotonSession:
-    """A ``create_autospec(PhotonSession)`` double that returns a 200 PhotonResponse by default."""
-    session = create_autospec(PhotonSession, instance=True)
+def mock_session() -> ElastiCacheIntegrationsSession:
+    """A ``create_autospec(ElastiCacheIntegrationsSession)`` double that returns a 200 ElastiCacheIntegrationsResponse by default."""
+    session = create_autospec(ElastiCacheIntegrationsSession, instance=True)
     session.is_open = True
     session.is_connection_healthy = True
-    session.request.return_value = PhotonResponse(status_code=200, headers={}, body=b"{}")
+    session.request.return_value = ElastiCacheIntegrationsResponse(
+        status_code=200, headers={}, body=b"{}"
+    )
     return session

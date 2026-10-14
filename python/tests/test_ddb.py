@@ -2,18 +2,18 @@
 
 Drive the full client path:
 
-    photon.client("dynamodb") -> boto3 GetItem -> before-send hook -> PhotonSession
-        -> real PhotonConnector (verifying TLS) -> MockCache -> response
+    elasticache_integrations.client("dynamodb") -> boto3 GetItem -> before-send hook -> ElastiCacheIntegrationsSession
+        -> real ElastiCacheIntegrationsConnector (verifying TLS) -> MockCache -> response
 
-These exercise the **real** pure-Python ``PhotonConnector`` over **verifying TLS** (not a double) —
+These exercise the **real** pure-Python ``ElastiCacheIntegrationsConnector`` over **verifying TLS** (not a double) —
 the one place in the suite that does so. The mock cache is started with ``tls=True`` so it mints a
 self-signed cert, which the client trusts via ``SSL_CERT_FILE`` (honored by the connector's
 default ``load_default_certs()`` path). No real cache or DynamoDB is contacted.
 
 How the mock behaves: ``MockCache`` is a recorder + answering machine — it speaks RESP but knows
-nothing about DynamoDB. ``AUTH`` replies ``+OK``; ``photon.config`` replies a canned resolved
-config; ``photon.request`` **records** the request (``cache.requests``,
-``cache.last_request_args``, ``cache.photon_command_log``) and replies the **canned** response it
+nothing about DynamoDB. ``AUTH`` replies ``+OK``; ``aws.config`` replies a canned resolved
+config; ``aws.request`` **records** the request (``cache.requests``,
+``cache.last_request_args``, ``cache.cache_command_log``) and replies the **canned** response it
 was constructed with, regardless of operation or input. So the canned reply controls what the app
 receives, and the recording shows what the client sent.
 
@@ -31,7 +31,7 @@ from unittest import mock
 import pytest
 from botocore.hooks import first_non_none_response
 
-import photon
+import elasticache_integrations
 from tests.mock import MockCache
 
 ITEM = {"id": {"S": "42"}, "name": {"S": "widget"}}
@@ -57,7 +57,7 @@ def cache(monkeypatch):
 
 def test_get_item(cache):
     """get_item is served by the mock cache, and the request arrives there exactly as sent."""
-    ddb = photon.client(
+    ddb = elasticache_integrations.client(
         "dynamodb", region_name="us-east-1", endpoint=cache.endpoint, cache_name="test-cache"
     )
 
@@ -66,10 +66,10 @@ def test_get_item(cache):
     assert result["Item"] == ITEM
 
     # Handshake ordering: hello -> config -> request.
-    log = cache.photon_command_log
-    assert log.index("hello") < log.index("photon.config") < log.index("photon.request")
+    log = cache.cache_command_log
+    assert log.index("hello") < log.index("aws.config") < log.index("aws.request")
 
-    # Check what photon sent to the cache.
+    # Check what elasticache_integrations sent to the cache.
     method, url, headers, req_body, metadata = cache.last_request_args[:5]
     assert method == b"POST"
     # The SDK's request URL is the real DynamoDB endpoint (the cache endpoint is only where
@@ -89,21 +89,21 @@ def test_get_item(cache):
 
 def test_connection_reuse(cache):
     """Two calls on one client reuse one connection: one config handshake, two requests."""
-    ddb = photon.client(
+    ddb = elasticache_integrations.client(
         "dynamodb", region_name="us-east-1", endpoint=cache.endpoint, cache_name="test-cache"
     )
 
     ddb.get_item(TableName="my-table", Key={"id": {"S": "42"}})
     ddb.get_item(TableName="my-table", Key={"id": {"S": "42"}})
 
-    assert cache.photon_command_log.count("photon.config") == 1
-    assert cache.photon_command_log.count("photon.request") == 2
+    assert cache.cache_command_log.count("aws.config") == 1
+    assert cache.cache_command_log.count("aws.request") == 2
     ddb.close()
 
 
 def test_close_lifecycle(cache):
-    """close() disconnects Photon (nothing reaches the cache afterwards) and is idempotent."""
-    ddb = photon.client(
+    """close() disconnects ElastiCacheIntegrations (nothing reaches the cache afterwards) and is idempotent."""
+    ddb = elasticache_integrations.client(
         "dynamodb", region_name="us-east-1", endpoint=cache.endpoint, cache_name="test-cache"
     )
     ddb.get_item(TableName="my-table", Key={"id": {"S": "42"}})  # served by the cache

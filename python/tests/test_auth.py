@@ -10,12 +10,12 @@ from botocore.credentials import Credentials
 from botocore.session import Session as BotocoreSession
 from developer_toolkit_elasticache import ConfigurationError, InvalidParameterError
 
-from photon.auth import (
+from elasticache_integrations.auth import (
     DEFAULT_USER_ID,
     ManagedIamAuthTokenProvider,
     build_cache_auth_provider,
 )
-from photon.exceptions import PhotonError
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsError
 
 FIRST_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
 ROTATED_ACCESS_KEY = "ASIAROTATEDCREDENTIAL"
@@ -68,12 +68,14 @@ class TestManagedIamAuthTokenProvider:
         )
         provider.close()
 
-        with pytest.raises(PhotonError, match="Failed to obtain refreshed IAM auth token"):
+        with pytest.raises(
+            ElastiCacheIntegrationsError, match="Failed to obtain refreshed IAM auth token"
+        ):
             provider()
 
 
 class TestBuildCacheAuthProvider:
-    @patch("photon.auth.ElastiCacheIAMAuthTokenManager")
+    @patch("elasticache_integrations.auth.ElastiCacheIAMAuthTokenManager")
     def test_passes_configuration_to_toolkit_manager(self, manager_class):
         manager_class.return_value = MagicMock()
         session = fake_session()
@@ -109,11 +111,11 @@ class TestBuildCacheAuthProvider:
             provider.close()
 
     def test_missing_cache_name_raises(self):
-        with pytest.raises(PhotonError, match="cache_name is required"):
+        with pytest.raises(ElastiCacheIntegrationsError, match="cache_name is required"):
             build_cache_auth_provider(cache_name=None, region="us-east-1")
 
     def test_rejects_refresh_outside_toolkit_safety_margin(self):
-        with pytest.raises(PhotonError, match="refresh_after"):
+        with pytest.raises(ElastiCacheIntegrationsError, match="refresh_after"):
             build_cache_auth_provider(
                 cache_name="my-cache",
                 region="us-east-1",
@@ -121,12 +123,12 @@ class TestBuildCacheAuthProvider:
                 token_refresh_delay=880,
             )
 
-    @patch("photon.auth.ElastiCacheIAMAuthTokenManager")
+    @patch("elasticache_integrations.auth.ElastiCacheIAMAuthTokenManager")
     def test_wraps_unexpected_constructor_errors_without_details(self, manager_class):
         manager_class.side_effect = RuntimeError("secret=credential-material")
 
         error = pytest.raises(
-            PhotonError,
+            ElastiCacheIntegrationsError,
             build_cache_auth_provider,
             cache_name="my-cache",
             region="us-east-1",
@@ -147,12 +149,12 @@ class TestBuildCacheAuthProvider:
         ),
     ],
 )
-@patch("photon.auth.ElastiCacheIAMAuthTokenManager")
+@patch("elasticache_integrations.auth.ElastiCacheIAMAuthTokenManager")
 def test_toolkit_input_errors_reach_the_caller(manager_class, toolkit_error):
     manager_class.side_effect = toolkit_error
 
     error = pytest.raises(
-        PhotonError,
+        ElastiCacheIntegrationsError,
         build_cache_auth_provider,
         cache_name="my-cache",
         region="us-east-1",

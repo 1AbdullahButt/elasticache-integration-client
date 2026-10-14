@@ -20,13 +20,13 @@ extensions.configure<com.vanniktech.maven.publish.MavenPublishBaseExtension>("ma
 
     coordinates(
         project.group.toString(),
-        "photon-java",
+        "elasticache-integrations-java",
         project.version.toString()
     )
 
     pom {
-        name.set("Photon Java Client")
-        description.set("Photon integration for AWS SDK for Java v2 DynamoDB clients.")
+        name.set("ElastiCache Integrations Java Client")
+        description.set("ElastiCache Integrations for AWS SDK for Java v2 DynamoDB clients.")
         inceptionYear.set("2026")
         url.set("https://github.com/awslabs/photon")
 
