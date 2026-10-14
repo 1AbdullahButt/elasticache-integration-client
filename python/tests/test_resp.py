@@ -1,9 +1,12 @@
-"""Tests for photon.resp — the standalone RESP3 wire codec."""
+"""Tests for elasticache_integrations.resp — the standalone RESP3 wire codec."""
 
 import pytest
 
-from photon.exceptions import PhotonError, PhotonProtocolError
-from photon.resp import (
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsError,
+    ElastiCacheIntegrationsProtocolError,
+)
+from elasticache_integrations.resp import (
     IncompleteFrame,
     RespError,
     RespPush,
@@ -15,10 +18,10 @@ from photon.resp import (
 # --- AC1: codec API + IncompleteFrame is a plain Exception --------------------
 
 
-def test_incomplete_frame_is_not_photon_error():
-    """IncompleteFrame ("need more bytes") must be a plain Exception, NOT a PhotonError, so an incremental reader can distinguish truncation from corruption."""
+def test_incomplete_frame_is_not_elasticache_integrations_error():
+    """IncompleteFrame ("need more bytes") must be a plain Exception, NOT a ElastiCacheIntegrationsError, so an incremental reader can distinguish truncation from corruption."""
     assert issubclass(IncompleteFrame, Exception)
-    assert not issubclass(IncompleteFrame, PhotonError)
+    assert not issubclass(IncompleteFrame, ElastiCacheIntegrationsError)
 
 
 # --- AC2: encode/decode_resp round-trip --------------------------------------------
@@ -26,16 +29,16 @@ def test_incomplete_frame_is_not_photon_error():
 
 def test_encode_decode_round_trip():
     """Encoding a command then decoding it yields the original elements and consumes the whole buffer."""
-    encoded = encode_resp("photon.request", b"POST", b"body")
+    encoded = encode_resp("aws.request", b"POST", b"body")
     value, nxt = decode_resp(encoded)
-    assert value == [b"photon.request", b"POST", b"body"]
+    assert value == [b"aws.request", b"POST", b"body"]
     assert nxt == len(encoded)
 
 
 def test_encode_resp_resp3_array_framing():
     """Verifies the exact RESP3 byte framing (*N, $len, CRLFs) produced by the encoder."""
-    encoded = encode_resp("photon.request", b"POST", b"https://x/")
-    assert encoded == (b"*3\r\n$14\r\nphoton.request\r\n$4\r\nPOST\r\n$10\r\nhttps://x/\r\n")
+    encoded = encode_resp("aws.request", b"POST", b"https://x/")
+    assert encoded == (b"*3\r\n$11\r\naws.request\r\n$4\r\nPOST\r\n$10\r\nhttps://x/\r\n")
 
 
 # --- AC3: all RESP3 prefixes decode_resp -------------------------------------------
@@ -145,13 +148,13 @@ def test_decode_empty_map():
 def test_decode_map_with_aggregate_key_raises_protocol_error():
     """An array key is legal RESP3 but cannot key a dict. Rejected as a protocol error rather
     than raising an unhandled TypeError out of the codec."""
-    with pytest.raises(PhotonProtocolError, match="Unhashable RESP map key"):
+    with pytest.raises(ElastiCacheIntegrationsProtocolError, match="Unhashable RESP map key"):
         decode_resp(b"%1\r\n*1\r\n:1\r\n:2\r\n")
 
 
 def test_decode_negative_map_length_raises_protocol_error():
     """There is no null map in RESP3, so a negative length is garbage, not a null."""
-    with pytest.raises(PhotonProtocolError, match="Malformed RESP map length"):
+    with pytest.raises(ElastiCacheIntegrationsProtocolError, match="Malformed RESP map length"):
         decode_resp(b"%-1\r\n")
 
 
@@ -178,7 +181,7 @@ def test_truncation_raises_incomplete_frame(partial, message):
         decode_resp(partial)
 
 
-# --- AC5: garbage raises PhotonProtocolError ----------------------------------
+# --- AC5: garbage raises ElastiCacheIntegrationsProtocolError ----------------------------------
 
 
 @pytest.mark.parametrize(
@@ -193,8 +196,8 @@ def test_truncation_raises_incomplete_frame(partial, message):
     ],
 )
 def test_decode_garbage_raises_protocol_error(garbage, message):
-    """Genuinely corrupt input raises PhotonProtocolError, naming what it could not read."""
-    with pytest.raises(PhotonProtocolError, match=message):
+    """Genuinely corrupt input raises ElastiCacheIntegrationsProtocolError, naming what it could not read."""
+    with pytest.raises(ElastiCacheIntegrationsProtocolError, match=message):
         decode_resp(garbage)
 
 
@@ -230,13 +233,13 @@ def test_decode_from_bytearray_incremental_consume():
 
 def test_decode_bytearray_garbage_raises_protocol_error():
     """Unknown prefixes are rejected from a bytearray buffer too (hashable prefix lookup)."""
-    with pytest.raises(PhotonProtocolError):
+    with pytest.raises(ElastiCacheIntegrationsProtocolError):
         decode_resp(bytearray(b"!bad\r\n"))
 
 
 def test_decode_map_from_bytearray_keeps_keys_hashable():
     """A HELLO reply is a ``%`` map and dict keys must be hashable, so an unnormalized
-    bytearray key raises PhotonProtocolError on the connect path. Added with the ``%``/``>``
+    bytearray key raises ElastiCacheIntegrationsProtocolError on the connect path. Added with the ``%``/``>``
     decoders, which landed after the bytearray change was written."""
     value, _ = decode_resp(bytearray(b"%1\r\n$5\r\nproto\r\n:3\r\n"))
     assert value == {b"proto": 3}
@@ -246,6 +249,6 @@ def test_decode_map_from_bytearray_keeps_keys_hashable():
 def test_decode_push_from_bytearray_keeps_the_kind_bytes():
     """``_decode_push`` isinstance-checks the kind against bytes, so an unnormalized bytearray
     would be rejected as an invalid push kind."""
-    value, _ = decode_resp(bytearray(b">2\r\n$15\r\nphoton.response\r\n:1\r\n"))
-    assert value.kind == b"photon.response"
+    value, _ = decode_resp(bytearray(b">2\r\n$12\r\naws.response\r\n:1\r\n"))
+    assert value.kind == b"aws.response"
     assert type(value.kind) is bytes

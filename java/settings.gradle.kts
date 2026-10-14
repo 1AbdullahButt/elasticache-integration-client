@@ -1,1 +1,1 @@
-rootProject.name = "photon-java"
+rootProject.name = "elasticache-integrations-java"

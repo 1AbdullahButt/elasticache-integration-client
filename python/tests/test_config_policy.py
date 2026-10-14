@@ -1,9 +1,9 @@
-"""Tests for photon.config_policy."""
+"""Tests for elasticache_integrations.config_policy."""
 
 import pytest
 
-from photon.config_policy import DEFAULT_STALENESS_DURATION, ConfigPolicy
-from photon.exceptions import PhotonConfigError
+from elasticache_integrations.config_policy import DEFAULT_STALENESS_DURATION, ConfigPolicy
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsConfigError
 
 
 def test_the_default_window_is_one_hour():
@@ -15,5 +15,5 @@ def test_the_default_window_is_one_hour():
 def test_policy_rejects_unusable_durations(bad):
     """Only a positive whole number of seconds is a window: a string, a float, a bool, ``None``,
     zero and negatives are all rejected rather than reinterpreted."""
-    with pytest.raises(PhotonConfigError):
+    with pytest.raises(ElastiCacheIntegrationsConfigError):
         ConfigPolicy(staleness_duration=bad)

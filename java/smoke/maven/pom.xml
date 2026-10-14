@@ -4,8 +4,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>software.amazon.photon.smoke</groupId>
-    <artifactId>photon-java-maven-smoke</artifactId>
+    <groupId>software.amazon.elasticacheintegrations.smoke</groupId>
+    <artifactId>elasticache-integrations-java-maven-smoke</artifactId>
     <version>1.0.0</version>
 
     <properties>
@@ -16,16 +16,16 @@
 
     <repositories>
         <repository>
-            <id>photon-release</id>
-            <url>${photon.repository}</url>
+            <id>elasticache-integrations-release</id>
+            <url>${cache.repository}</url>
         </repository>
     </repositories>
 
     <dependencies>
         <dependency>
-            <groupId>software.amazon.photon</groupId>
-            <artifactId>photon-java</artifactId>
-            <version>${photon.version}</version>
+            <groupId>software.amazon.elasticacheintegrations</groupId>
+            <artifactId>elasticache-integrations-java</artifactId>
+            <version>${cache.version}</version>
         </dependency>
     </dependencies>
 
@@ -43,7 +43,7 @@
                             <goal>java</goal>
                         </goals>
                         <configuration>
-                            <mainClass>PhotonConsumerSmoke</mainClass>
+                            <mainClass>ElastiCacheIntegrationsConsumerSmoke</mainClass>
                         </configuration>
                     </execution>
                 </executions>

@@ -1,1 +1,1 @@
-"""Photon test suite."""
+"""ElastiCacheIntegrations test suite."""
