@@ -1,7 +1,7 @@
 {
-  "name": "photon-nodejs",
+  "name": "elasticache-integrations-nodejs",
   "version": "0.0.1",
-  "description": "TypeScript parity prototype for the Photon Node.js client.",
+  "description": "TypeScript parity prototype for the ElastiCacheIntegrations Node.js client.",
   "license": "Apache-2.0",
   "sideEffects": false,
   "engines": {

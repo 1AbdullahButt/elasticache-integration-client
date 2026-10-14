@@ -6,7 +6,7 @@ import { HttpRequest } from "@smithy/core/protocols";
 import { createServer, type Server } from "node:http";
 
 import { client } from "../src/index.js";
-import { PhotonConnectionLost } from "../src/errors.js";
+import { ElastiCacheIntegrationsConnectionLost } from "../src/errors.js";
 import { MockCache, Reply } from "./mock-cache.js";
 
 const retryableResponse = Buffer.from(`<?xml version="1.0"?>
@@ -24,8 +24,8 @@ const successResponse = Buffer.from(`<?xml version="1.0"?>
       <Expiration>2030-01-01T00:00:00Z</Expiration>
     </Credentials>
     <AssumedRoleUser>
-      <AssumedRoleId>AROAEXAMPLE:photon-test</AssumedRoleId>
-      <Arn>arn:aws:iam::123456789012:role/PhotonTest</Arn>
+      <AssumedRoleId>AROAEXAMPLE:elastiCacheIntegrations-test</AssumedRoleId>
+      <Arn>arn:aws:iam::123456789012:role/ElastiCacheIntegrationsTest</Arn>
     </AssumedRoleUser>
   </AssumeRoleResult>
 </AssumeRoleResponse>`);
@@ -102,13 +102,13 @@ describe("public client", () => {
       },
     });
 
-    const prePhotonRequests: HttpRequest[] = [];
+    const preCacheRequests: HttpRequest[] = [];
     sts.middlewareStack.addRelativeTo(
       (next) => async (args) => {
         if (!HttpRequest.isInstance(args.request)) {
-          throw new Error("expected Smithy HttpRequest before Photon");
+          throw new Error("expected Smithy HttpRequest before ElastiCacheIntegrations");
         }
-        prePhotonRequests.push(args.request);
+        preCacheRequests.push(args.request);
         return next(args);
       },
       {
@@ -121,21 +121,21 @@ describe("public client", () => {
     try {
       const result = await sts.send(
         new AssumeRoleCommand({
-          RoleArn: "arn:aws:iam::123456789012:role/PhotonTest",
-          RoleSessionName: "photon-test",
+          RoleArn: "arn:aws:iam::123456789012:role/ElastiCacheIntegrationsTest",
+          RoleSessionName: "elastiCacheIntegrations-test",
         }),
       );
 
       expect(result.Credentials?.AccessKeyId).toBe("ASIAEXAMPLE");
       expect(result.Credentials?.SecretAccessKey).toBe("secret-example");
-      expect(prePhotonRequests).toHaveLength(2);
-      // The SDK's real signer still runs; Photon strips the auth headers later.
-      for (const request of prePhotonRequests) {
+      expect(preCacheRequests).toHaveLength(2);
+      // The SDK's real signer still runs; ElastiCacheIntegrations strips the auth headers later.
+      for (const request of preCacheRequests) {
         expect(request.headers.authorization).toBeDefined();
         expect(request.headers["x-amz-date"]).toBeDefined();
         expect(request.headers["x-amz-security-token"]).toBeDefined();
       }
-      expect(cache.photonCommandLog).toEqual(["hello", "photon.config"]);
+      expect(cache.cacheCommandLog).toEqual(["hello", "aws.config"]);
       expect(cache.requests).toHaveLength(0);
       expect(originRequests).toHaveLength(2);
       for (const request of originRequests) {
@@ -159,7 +159,7 @@ describe("public DynamoDB client", () => {
         {
           expr:
             "service == 'dynamodb' && operation == 'GetItem' " +
-            "&& body.TableName == 'PhotonTest'",
+            "&& body.TableName == 'ElastiCacheIntegrationsTest'",
           vars: {},
         },
       ],
@@ -188,7 +188,7 @@ describe("public DynamoDB client", () => {
     await cache.stop();
   });
 
-  it("routes serialized unsigned DynamoDB requests through Photon and deserializes retries", async () => {
+  it("routes serialized unsigned DynamoDB requests through ElastiCacheIntegrations and deserializes retries", async () => {
     const dynamodb = await client("dynamodb", DynamoDBClient, {
       endpoint: cache.endpoint,
       cacheName: "test-cache",
@@ -205,13 +205,13 @@ describe("public DynamoDB client", () => {
       },
     });
 
-    const prePhotonRequests: HttpRequest[] = [];
+    const preCacheRequests: HttpRequest[] = [];
     dynamodb.middlewareStack.addRelativeTo(
       (next) => async (args) => {
         if (!HttpRequest.isInstance(args.request)) {
-          throw new Error("expected Smithy HttpRequest before Photon");
+          throw new Error("expected Smithy HttpRequest before ElastiCacheIntegrations");
         }
-        prePhotonRequests.push(args.request);
+        preCacheRequests.push(args.request);
         return next(args);
       },
       {
@@ -224,28 +224,25 @@ describe("public DynamoDB client", () => {
     try {
       const result = await dynamodb.send(
         new GetItemCommand({
-          TableName: "PhotonTest",
+          TableName: "ElastiCacheIntegrationsTest",
           Key: { id: { S: "key" } },
         }),
       );
 
       expect(result.Item).toEqual({ id: { S: "value" } });
-      expect(prePhotonRequests).toHaveLength(2);
-      // The SDK's real signer still runs; Photon strips the auth headers later.
-      for (const request of prePhotonRequests) {
+      expect(preCacheRequests).toHaveLength(2);
+      // The SDK's real signer still runs; ElastiCacheIntegrations strips the auth headers later.
+      for (const request of preCacheRequests) {
         expect(request.headers.authorization).toBeDefined();
         expect(request.headers["x-amz-date"]).toBeDefined();
         expect(request.headers["x-amz-security-token"]).toBeDefined();
       }
-      expect(cache.photonCommandLog).toEqual([
-        "hello",
-        "photon.config",
-        "photon.request",
-        "photon.request",
-      ]);
+      expect(cache.cacheCommandLog).toEqual(["hello", "aws.config", "aws.request", "aws.request"]);
       expect(cache.requests).toHaveLength(2);
       for (const request of cache.requests) {
-        expect(request.body.toString()).toBe('{"TableName":"PhotonTest","Key":{"id":{"S":"key"}}}');
+        expect(request.body.toString()).toBe(
+          '{"TableName":"ElastiCacheIntegrationsTest","Key":{"id":{"S":"key"}}}',
+        );
         expect(request.headers.toString()).toContain("content-type:application/x-amz-json-1.0");
         expect(request.headers.toString()).toContain("x-amz-target:DynamoDB_20120810.GetItem");
         expect(request.headers.toString()).not.toMatch(
@@ -286,13 +283,15 @@ describe("public DynamoDB client", () => {
     try {
       const request = dynamodb.send(
         new GetItemCommand({
-          TableName: "PhotonTest",
+          TableName: "ElastiCacheIntegrationsTest",
           Key: { id: { S: "key" } },
         }),
       );
-      const rejection = expect(request).rejects.toBeInstanceOf(PhotonConnectionLost);
+      const rejection = expect(request).rejects.toBeInstanceOf(
+        ElastiCacheIntegrationsConnectionLost,
+      );
       await vi.waitFor(() => {
-        expect(hangingCache.photonCommandLog).toContain("photon.request");
+        expect(hangingCache.cacheCommandLog).toContain("aws.request");
       });
 
       await Promise.all(

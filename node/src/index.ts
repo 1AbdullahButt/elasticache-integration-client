@@ -1,7 +1,11 @@
-/** Photon client package, public API. */
+/** ElastiCacheIntegrations client package, public API. */
 export { client } from "./client.js";
-export type { PhotonClientOptions } from "./client.js";
+export type { ElastiCacheIntegrationsClientOptions } from "./client.js";
 export type { ReconnectPolicyOptions } from "./session.js";
-export { PhotonCacheUnavailable, PhotonConfigError, PhotonError } from "./errors.js";
+export {
+  ElastiCacheIntegrationsCacheUnavailable,
+  ElastiCacheIntegrationsConfigError,
+  ElastiCacheIntegrationsError,
+} from "./errors.js";
 
 export const version = "0.0.1";

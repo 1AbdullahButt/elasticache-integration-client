@@ -1,15 +1,21 @@
 import { buildCacheAuthProvider } from "./auth.js";
-import { PhotonConnector, type PhotonConnectorOptions } from "./connection.js";
-import { PhotonConfigError, PhotonError } from "./errors.js";
-import { PhotonHandle, type PhotonCompatibleClient } from "./middleware.js";
+import {
+  ElastiCacheIntegrationsConnector,
+  type ElastiCacheIntegrationsConnectorOptions,
+} from "./connection.js";
+import { ElastiCacheIntegrationsConfigError, ElastiCacheIntegrationsError } from "./errors.js";
+import {
+  ElastiCacheIntegrationsHandle,
+  type ElastiCacheIntegrationsCompatibleClient,
+} from "./middleware.js";
 import {
   DEFAULT_STALENESS_DURATION_MS,
   parseEndpoint,
-  PhotonSession,
+  ElastiCacheIntegrationsSession,
   type ReconnectPolicyOptions,
 } from "./session.js";
 
-export interface PhotonClientOptions<TConfig extends object> {
+export interface ElastiCacheIntegrationsClientOptions<TConfig extends object> {
   /** Cache endpoint as host:port. */
   endpoint: string;
   /** ElastiCache Serverless cache name, distinct from the endpoint. */
@@ -27,8 +33,8 @@ export interface PhotonClientOptions<TConfig extends object> {
   iamRefreshAfterSeconds?: number;
   /** AWS SDK v3 client configuration. */
   clientConfig?: Omit<TConfig, "region">;
-  /** Node-specific Photon transport configuration. */
-  connectorOptions?: PhotonConnectorOptions;
+  /** Node-specific ElastiCacheIntegrations transport configuration. */
+  connectorOptions?: ElastiCacheIntegrationsConnectorOptions;
   /**
    * Seconds that disconnected requests may fall back to origin per outage.
    * `null`, `undefined`, or a negative value means indefinitely; zero disables fallback.
@@ -36,7 +42,7 @@ export interface PhotonClientOptions<TConfig extends object> {
   fallbackDuration?: number | null;
   /** Advanced reconnection and fallback configuration. */
   reconnectPolicy?: ReconnectPolicyOptions;
-  /** Overrides sent by the photon.config handshake. */
+  /** Overrides sent by the aws.config handshake. */
   overrides?: Readonly<Record<string, unknown>>;
   /**
    * How long, in seconds, the resolved config stays trusted while refreshes are failing. Past it
@@ -51,7 +57,7 @@ interface InitializeOptions {
   region?: string;
   userId?: string;
   iamRefreshAfterSeconds?: number;
-  connectorOptions?: PhotonConnectorOptions;
+  connectorOptions?: ElastiCacheIntegrationsConnectorOptions;
   fallbackDuration?: number | null;
   reconnectPolicy?: ReconnectPolicyOptions;
   overrides: Readonly<Record<string, unknown>>;
@@ -67,24 +73,26 @@ interface InitializeOptions {
 function stalenessDurationMs(seconds: number | undefined): number {
   if (seconds === undefined) return DEFAULT_STALENESS_DURATION_MS;
   if (!Number.isSafeInteger(seconds * 1_000) || !Number.isInteger(seconds) || seconds <= 0) {
-    throw new PhotonConfigError("stalenessDuration must be a positive whole number of seconds");
+    throw new ElastiCacheIntegrationsConfigError(
+      "stalenessDuration must be a positive whole number of seconds",
+    );
   }
   return seconds * 1_000;
 }
 
 /**
- * Bring up a PhotonSession for an SDK client and install interception.
+ * Bring up a ElastiCacheIntegrationsSession for an SDK client and install interception.
  *
- * The session completes the authenticated HELLO 3 and photon.config handshakes
+ * The session completes the authenticated HELLO 3 and aws.config handshakes
  * before middleware is installed, so the first intercepted request sees a
  * ready session.
  */
-async function initialize<TClient extends PhotonCompatibleClient>(
+async function initialize<TClient extends ElastiCacheIntegrationsCompatibleClient>(
   sdkClient: TClient,
   service: string,
   endpoint: string,
   options: InitializeOptions,
-): Promise<PhotonHandle> {
+): Promise<ElastiCacheIntegrationsHandle> {
   const [host, port] = parseEndpoint(endpoint);
   // A caller-supplied provider replaces token generation rather than competing with it.
   const managedAuthProvider =
@@ -102,7 +110,7 @@ async function initialize<TClient extends PhotonCompatibleClient>(
   const authProvider = options.connectorOptions?.authProvider ?? managedAuthProvider;
   const connectorFactory = Object.assign(
     () =>
-      new PhotonConnector(host, port, {
+      new ElastiCacheIntegrationsConnector(host, port, {
         ...options.connectorOptions,
         ...(authProvider === undefined ? {} : { authProvider }),
       }),
@@ -115,10 +123,14 @@ async function initialize<TClient extends PhotonCompatibleClient>(
       : { fallbackDurationMs: fallbackDurationMs(options.fallbackDuration) }),
     stalenessDurationMs: options.stalenessDurationMs,
   };
-  const session = new PhotonSession(connectorFactory, options.overrides, reconnectPolicy);
+  const session = new ElastiCacheIntegrationsSession(
+    connectorFactory,
+    options.overrides,
+    reconnectPolicy,
+  );
   try {
     await session.open();
-    const handle = new PhotonHandle(sdkClient, session, service);
+    const handle = new ElastiCacheIntegrationsHandle(sdkClient, session, service);
     return handle;
   } catch (error) {
     try {
@@ -134,7 +146,7 @@ function fallbackDurationMs(value: number | null): number | null {
   if (value === null) return value;
   const milliseconds = value * 1_000;
   if (!Number.isSafeInteger(milliseconds) || milliseconds % 1_000 !== 0) {
-    throw new PhotonConfigError(
+    throw new ElastiCacheIntegrationsConfigError(
       "fallbackDuration must be a whole number of seconds, null, or undefined",
     );
   }
@@ -142,20 +154,23 @@ function fallbackDurationMs(value: number | null): number | null {
 }
 
 /**
- * Create an AWS SDK v3 client for `service` wired up with Photon.
+ * Create an AWS SDK v3 client for `service` wired up with ElastiCacheIntegrations.
  *
  * Returns the ordinary SDK client with an identical API. Calling destroy() on
- * it disconnects Photon before destroying the SDK client as usual.
+ * it disconnects ElastiCacheIntegrations before destroying the SDK client as usual.
  *
  * `ClientCtor` and `clientConfig` are Node-specific because AWS SDK v3 has no
  * runtime service-name factory.
  */
-export async function client<TConfig extends object, TClient extends PhotonCompatibleClient>(
+export async function client<
+  TConfig extends object,
+  TClient extends ElastiCacheIntegrationsCompatibleClient,
+>(
   service: string,
   ClientCtor: new (config: TConfig) => TClient,
-  options: PhotonClientOptions<TConfig>,
+  options: ElastiCacheIntegrationsClientOptions<TConfig>,
 ): Promise<TClient> {
-  if (!service.trim()) throw new PhotonError("service must not be blank");
+  if (!service.trim()) throw new ElastiCacheIntegrationsError("service must not be blank");
   const {
     endpoint,
     cacheName,

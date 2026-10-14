@@ -1,5 +1,5 @@
 /**
- * PhotonSession owns cache connection recovery and the asynchronous request API.
+ * ElastiCacheIntegrationsSession owns cache connection recovery and the asynchronous request API.
  *
  * Initial connection attempts are bounded so client creation fails loudly.
  * After a live connection is lost, reconnect attempts continue in the
@@ -7,7 +7,7 @@
  * been sent may use the origin fallback window while no connector is available.
  *
  * The resolved config and its CEL predicates determine which requests are sent
- * to Photon. The middleware may pass predicate declines, disconnected requests,
+ * to ElastiCacheIntegrations. The middleware may pass predicate declines, disconnected requests,
  * and dropped-connection failures for idempotent operations through to origin.
  *
  * Each active connection owns background refreshers for resolved config and
@@ -18,20 +18,24 @@
  */
 import { performance } from "node:perf_hooks";
 
-import type { PhotonConnector } from "./connection.js";
+import type { ElastiCacheIntegrationsConnector } from "./connection.js";
 import {
-  PhotonCacheUnavailable,
-  PhotonConfigError,
-  PhotonOverridesRejected,
-  PhotonConfigUnevaluable,
-  PhotonConnectionError,
-  PhotonConnectionLost,
-  PhotonError,
-  PhotonProtocolError,
-  PhotonRejectedError,
-  PhotonTimeoutError,
+  ElastiCacheIntegrationsCacheUnavailable,
+  ElastiCacheIntegrationsConfigError,
+  ElastiCacheIntegrationsOverridesRejected,
+  ElastiCacheIntegrationsConfigUnevaluable,
+  ElastiCacheIntegrationsConnectionError,
+  ElastiCacheIntegrationsConnectionLost,
+  ElastiCacheIntegrationsError,
+  ElastiCacheIntegrationsProtocolError,
+  ElastiCacheIntegrationsRejectedError,
+  ElastiCacheIntegrationsTimeoutError,
 } from "./errors.js";
-import type { PhotonRequest, ResolvedConfig, PhotonResponse } from "./models.js";
+import type {
+  ElastiCacheIntegrationsRequest,
+  ResolvedConfig,
+  ElastiCacheIntegrationsResponse,
+} from "./models.js";
 import {
   parseConfigResponse,
   parseRequestResponse,
@@ -77,19 +81,22 @@ export interface ReconnectPolicyOptions {
 export const DEFAULT_STALENESS_DURATION_MS = 3_600_000;
 
 /** A config failure that cannot fix itself, so it is logged at error level on every occurrence. */
-function isPermanentConfigFailure(error: PhotonError): boolean {
-  return error instanceof PhotonOverridesRejected || error instanceof PhotonConfigUnevaluable;
+function isPermanentConfigFailure(error: ElastiCacheIntegrationsError): boolean {
+  return (
+    error instanceof ElastiCacheIntegrationsOverridesRejected ||
+    error instanceof ElastiCacheIntegrationsConfigUnevaluable
+  );
 }
 
 /** The cause of a permanent config failure, worded the same on every path. */
-function configFailureCause(error: PhotonError): string {
-  return error instanceof PhotonOverridesRejected
+function configFailureCause(error: ElastiCacheIntegrationsError): string {
+  return error instanceof ElastiCacheIntegrationsOverridesRejected
     ? "the proxy rejected the overrides (CONFIG_INVALID)"
     : "the config has a predicate this client cannot evaluate";
 }
 
 /** Session recovery settings. `clock` is injectable for deterministic staleness tests. */
-export interface PhotonSessionOptions extends ReconnectPolicyOptions {
+export interface ElastiCacheIntegrationsSessionOptions extends ReconnectPolicyOptions {
   /** How long the resolved config stays trusted while refreshes are failing, in milliseconds. */
   stalenessDurationMs?: number;
   /** Monotonic clock in milliseconds. */
@@ -108,15 +115,15 @@ interface ReconnectPolicy {
 
 export type ConnectionState = "init" | "alive" | "reconnecting" | "closed";
 type SessionState = "created" | "open" | "closed";
-export interface PhotonConnectorFactory {
-  (): PhotonConnector;
+export interface ElastiCacheIntegrationsConnectorFactory {
+  (): ElastiCacheIntegrationsConnector;
   /** Release resources shared by every connector produced by this factory. */
   close?: () => void;
 }
 
 function timerDelay(value: number, name: string): number {
   if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) {
-    throw new PhotonConfigError(
+    throw new ElastiCacheIntegrationsConfigError(
       `${name} must be greater than zero and at most ${MAX_TIMER_DELAY_MS}`,
     );
   }
@@ -126,7 +133,7 @@ function timerDelay(value: number, name: string): number {
 function jitteredTimerInterval(value: number, name: string, jitter: number): number {
   const interval = timerDelay(value, name);
   if (interval * (1 + jitter) > MAX_TIMER_DELAY_MS) {
-    throw new PhotonConfigError(
+    throw new ElastiCacheIntegrationsConfigError(
       `${name} must remain at most ${MAX_TIMER_DELAY_MS} after jitter is applied`,
     );
   }
@@ -135,7 +142,7 @@ function jitteredTimerInterval(value: number, name: string, jitter: number): num
 
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new PhotonConfigError(`${name} must be a positive integer`);
+    throw new ElastiCacheIntegrationsConfigError(`${name} must be a positive integer`);
   }
   return value;
 }
@@ -143,7 +150,7 @@ function positiveInteger(value: number, name: string): number {
 function fallbackWindow(value: number | null | undefined): number {
   if (value === null || value === undefined) return Number.POSITIVE_INFINITY;
   if (!Number.isSafeInteger(value)) {
-    throw new PhotonConfigError(
+    throw new ElastiCacheIntegrationsConfigError(
       "fallbackDurationMs must be a whole number of milliseconds, null, or undefined",
     );
   }
@@ -157,11 +164,11 @@ function resolveReconnectPolicy(
   const baseDelayMs = timerDelay(options?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS, "baseDelayMs");
   const maxDelayMs = timerDelay(options?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS, "maxDelayMs");
   if (maxDelayMs < baseDelayMs) {
-    throw new PhotonConfigError("maxDelayMs must be at least baseDelayMs");
+    throw new ElastiCacheIntegrationsConfigError("maxDelayMs must be at least baseDelayMs");
   }
   const jitter = options?.jitter ?? DEFAULT_JITTER;
   if (!Number.isFinite(jitter) || jitter < 0 || jitter >= 1) {
-    throw new PhotonConfigError("jitter must be in [0, 1)");
+    throw new ElastiCacheIntegrationsConfigError("jitter must be in [0, 1)");
   }
   return {
     fallbackWindowMs: fallbackWindow(options?.fallbackDurationMs),
@@ -188,7 +195,9 @@ function resolveReconnectPolicy(
 export function parseEndpoint(endpoint: string): [string, number] {
   const separator = endpoint.lastIndexOf(":");
   if (separator < 1 || separator === endpoint.length - 1) {
-    throw new PhotonConfigError(`Invalid endpoint "${endpoint}": expected host:port`);
+    throw new ElastiCacheIntegrationsConfigError(
+      `Invalid endpoint "${endpoint}": expected host:port`,
+    );
   }
 
   const endpointHost = endpoint.slice(0, separator);
@@ -198,24 +207,30 @@ export function parseEndpoint(endpoint: string): [string, number] {
       : endpointHost;
   const portText = endpoint.slice(separator + 1);
   if (host.length === 0) {
-    throw new PhotonConfigError(`Invalid endpoint "${endpoint}": host cannot be empty`);
+    throw new ElastiCacheIntegrationsConfigError(
+      `Invalid endpoint "${endpoint}": host cannot be empty`,
+    );
   }
   if (!/^[+-]?\d+$/.test(portText.trim())) {
-    throw new PhotonConfigError(`Invalid port in endpoint "${endpoint}"`);
+    throw new ElastiCacheIntegrationsConfigError(`Invalid port in endpoint "${endpoint}"`);
   }
 
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new PhotonConfigError(`Port out of range in endpoint "${endpoint}": ${port}`);
+    throw new ElastiCacheIntegrationsConfigError(
+      `Port out of range in endpoint "${endpoint}": ${port}`,
+    );
   }
   return [host, port];
 }
 
-function singleConnectorFactory(connector: PhotonConnector): PhotonConnectorFactory {
+function singleConnectorFactory(
+  connector: ElastiCacheIntegrationsConnector,
+): ElastiCacheIntegrationsConnectorFactory {
   let supplied = false;
   return () => {
     if (supplied) {
-      throw new PhotonConnectionError(
+      throw new ElastiCacheIntegrationsConnectionError(
         "This session does not have a reconnectable connector factory",
       );
     }
@@ -225,21 +240,21 @@ function singleConnectorFactory(connector: PhotonConnector): PhotonConnectorFact
 }
 
 /** Owns the active cache connection and exposes the asynchronous request API. */
-export class PhotonSession {
+export class ElastiCacheIntegrationsSession {
   private _config: ResolvedConfig | undefined;
   private predicateEvaluator = PredicateEvaluator.compile(undefined);
   private configRefresher: Refresher | undefined;
   private reauthRefresher: Refresher | undefined;
   private state: SessionState = "created";
   private connection: ConnectionState = "init";
-  private readonly connectorFactory: PhotonConnectorFactory;
+  private readonly connectorFactory: ElastiCacheIntegrationsConnectorFactory;
   private readonly reconnectPolicy: ReconnectPolicy;
   private readonly reconnectable: boolean;
-  private connector: PhotonConnector | undefined;
-  private candidate: PhotonConnector | undefined;
+  private connector: ElastiCacheIntegrationsConnector | undefined;
+  private candidate: ElastiCacheIntegrationsConnector | undefined;
   private reconnectTask: Promise<void> | undefined;
   private fallbackDeadline = 0;
-  private readonly disconnected = new WeakSet<PhotonConnector>();
+  private readonly disconnected = new WeakSet<ElastiCacheIntegrationsConnector>();
   private readonly recoveryAbort = new AbortController();
   private factoryClosed = false;
   /** Whether `overrides` have already been sent, so a refresh can use the no-argument form. */
@@ -250,14 +265,14 @@ export class PhotonSession {
   private configDeadline = 0;
 
   constructor(
-    connectorOrFactory: PhotonConnector | PhotonConnectorFactory,
+    connectorOrFactory: ElastiCacheIntegrationsConnector | ElastiCacheIntegrationsConnectorFactory,
     private readonly overrides: Readonly<Record<string, unknown>> = {},
-    sessionOptions?: PhotonSessionOptions,
+    sessionOptions?: ElastiCacheIntegrationsSessionOptions,
   ) {
     this.reconnectable = typeof connectorOrFactory === "function";
     this.connectorFactory = this.reconnectable
-      ? (connectorOrFactory as PhotonConnectorFactory)
-      : singleConnectorFactory(connectorOrFactory as PhotonConnector);
+      ? (connectorOrFactory as ElastiCacheIntegrationsConnectorFactory)
+      : singleConnectorFactory(connectorOrFactory as ElastiCacheIntegrationsConnector);
     this.reconnectPolicy = resolveReconnectPolicy(sessionOptions, this.reconnectable);
     this.stalenessDurationMs = sessionOptions?.stalenessDurationMs ?? DEFAULT_STALENESS_DURATION_MS;
     this.clock = sessionOptions?.clock ?? (() => performance.now());
@@ -292,16 +307,18 @@ export class PhotonSession {
   /** Open the initial connection with bounded retries. */
   async open(): Promise<void> {
     if (this.state !== "created") {
-      throw new PhotonError(`open() called on a ${this.state} session`);
+      throw new ElastiCacheIntegrationsError(`open() called on a ${this.state} session`);
     }
 
-    let lastFailure: unknown = new PhotonConnectionError("Photon connection attempts exhausted");
+    let lastFailure: unknown = new ElastiCacheIntegrationsConnectionError(
+      "ElastiCacheIntegrations connection attempts exhausted",
+    );
     for (let attempt = 1; attempt <= this.reconnectPolicy.connectAttempts; attempt++) {
       if (this.state !== "created") {
-        throw new PhotonConnectionError("Session closed during open()");
+        throw new ElastiCacheIntegrationsConnectionError("Session closed during open()");
       }
 
-      let candidate: PhotonConnector | undefined;
+      let candidate: ElastiCacheIntegrationsConnector | undefined;
       try {
         candidate = this.createCandidate();
         const initialized = await this.initializeWithTimeout(
@@ -309,7 +326,7 @@ export class PhotonSession {
           this.reconnectPolicy.connectionTimeoutMs,
         );
         if (this.state !== "created") {
-          throw new PhotonConnectionError("Session closed during open()");
+          throw new ElastiCacheIntegrationsConnectionError("Session closed during open()");
         }
         this.publishConnection(candidate, initialized);
         this.candidate = undefined;
@@ -323,7 +340,7 @@ export class PhotonSession {
           attempt < this.reconnectPolicy.connectAttempts &&
           !(await this.waitBeforeRetry(attempt))
         ) {
-          lastFailure = new PhotonConnectionError("Session closed during open()");
+          lastFailure = new ElastiCacheIntegrationsConnectionError("Session closed during open()");
           break;
         }
       }
@@ -332,13 +349,16 @@ export class PhotonSession {
     this.state = "closed";
     this.connection = "closed";
     if (lastFailure instanceof Error) throw lastFailure;
-    throw new PhotonConnectionError("Photon connection attempts exhausted", {
-      cause: lastFailure,
-    });
+    throw new ElastiCacheIntegrationsConnectionError(
+      "ElastiCacheIntegrations connection attempts exhausted",
+      {
+        cause: lastFailure,
+      },
+    );
   }
 
   /**
-   * Send one `photon.config` refresh and apply the result.
+   * Send one `aws.config` refresh and apply the result.
    *
    * A null reply installs nothing; any other reply replaces the config, predicates, and interval.
    * Either way the server confirmed the config, restarting the staleness window. Nothing is sent
@@ -364,11 +384,11 @@ export class PhotonSession {
     try {
       value = await connector.execute(command, ...args);
     } catch (error) {
-      if (!(error instanceof PhotonError)) throw error;
+      if (!(error instanceof ElastiCacheIntegrationsError)) throw error;
       if (
-        error instanceof PhotonConnectionLost ||
-        error instanceof PhotonProtocolError ||
-        error instanceof PhotonTimeoutError
+        error instanceof ElastiCacheIntegrationsConnectionLost ||
+        error instanceof ElastiCacheIntegrationsProtocolError ||
+        error instanceof ElastiCacheIntegrationsTimeoutError
       ) {
         if (this.state === "open" && this.connector === connector) {
           this.handleDisconnect(connector);
@@ -404,7 +424,7 @@ export class PhotonSession {
       this.predicateEvaluator = predicateEvaluator;
       this.configConfirmed();
     } catch (error) {
-      if (!(error instanceof PhotonError)) throw error;
+      if (!(error instanceof ElastiCacheIntegrationsError)) throw error;
       this.refreshFailed(error, connector, refresher);
     }
   }
@@ -420,8 +440,8 @@ export class PhotonSession {
    * Does nothing if the connector was replaced while the refresh was in flight.
    */
   private refreshFailed(
-    error: PhotonError,
-    connector: PhotonConnector,
+    error: ElastiCacheIntegrationsError,
+    connector: ElastiCacheIntegrationsConnector,
     refresher: Refresher,
   ): void {
     if (
@@ -450,18 +470,20 @@ export class PhotonSession {
   }
 
   /**
-   * Send matching requests to Photon and decline requests that are safe to send
+   * Send matching requests to ElastiCacheIntegrations and decline requests that are safe to send
    * to origin.
    *
    * A disconnected request has not been sent, so it may fall back while the
    * per-outage window is open. Once execute starts, every failure propagates:
-   * the request may have reached Photon and must not be directly replayed.
+   * the request may have reached ElastiCacheIntegrations and must not be directly replayed.
    */
-  async request(request: PhotonRequest): Promise<PhotonResponse | undefined> {
+  async request(
+    request: ElastiCacheIntegrationsRequest,
+  ): Promise<ElastiCacheIntegrationsResponse | undefined> {
     if (this.state === "created") {
-      throw new PhotonError("request() called on a created session");
+      throw new ElastiCacheIntegrationsError("request() called on a created session");
     }
-    if (this.state === "open" && !this.predicateEvaluator.shouldRouteToPhoton(request)) {
+    if (this.state === "open" && !this.predicateEvaluator.shouldRouteToCache(request)) {
       return undefined;
     }
 
@@ -472,17 +494,19 @@ export class PhotonSession {
     }
     if (this.state === "open" && currentConnector === undefined) {
       if (performance.now() < this.fallbackDeadline) return undefined;
-      throw new PhotonCacheUnavailable(sanitizeEndpoint(request.url));
+      throw new ElastiCacheIntegrationsCacheUnavailable(sanitizeEndpoint(request.url));
     }
     if (currentConnector === undefined) {
-      throw new PhotonConnectionError("Photon session has no active connection");
+      throw new ElastiCacheIntegrationsConnectionError(
+        "ElastiCacheIntegrations session has no active connection",
+      );
     }
 
     const [command, args] = serializeRequest(request);
     try {
       return parseRequestResponse(await currentConnector.execute(command, ...args));
     } catch (error) {
-      if (error instanceof PhotonRejectedError && error.code === AUTH_ERROR) {
+      if (error instanceof ElastiCacheIntegrationsRejectedError && error.code === AUTH_ERROR) {
         this.handleDisconnect(currentConnector);
         return undefined;
       }
@@ -531,7 +555,7 @@ export class PhotonSession {
     this.connectorFactory.close?.();
   }
 
-  private createCandidate(): PhotonConnector {
+  private createCandidate(): ElastiCacheIntegrationsConnector {
     const candidate = this.connectorFactory();
     candidate.onDisconnect = () => this.handleDisconnect(candidate);
     this.candidate = candidate;
@@ -539,7 +563,7 @@ export class PhotonSession {
   }
 
   private async initialize(
-    connector: PhotonConnector,
+    connector: ElastiCacheIntegrationsConnector,
   ): Promise<{ config: ResolvedConfig; evaluator: PredicateEvaluator }> {
     await connector.connect();
     await connector.handshake();
@@ -551,7 +575,7 @@ export class PhotonSession {
     } catch (error) {
       // Logged on every attempt: the reconnect loop discards its failures, and these never
       // fix themselves.
-      if (error instanceof PhotonError && isPermanentConfigFailure(error)) {
+      if (error instanceof ElastiCacheIntegrationsError && isPermanentConfigFailure(error)) {
         console.error(
           `Configuring a connection failed: ${configFailureCause(error)}. ` +
             `The connection is closed and retried: ${error.message}`,
@@ -562,7 +586,7 @@ export class PhotonSession {
   }
 
   private async initializeWithTimeout(
-    connector: PhotonConnector,
+    connector: ElastiCacheIntegrationsConnector,
     timeout: number,
   ): Promise<{ config: ResolvedConfig; evaluator: PredicateEvaluator }> {
     let timer: NodeJS.Timeout | undefined;
@@ -572,7 +596,11 @@ export class PhotonSession {
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             connector.destroy();
-            reject(new PhotonConnectionError(`opening a connection timed out after ${timeout}ms`));
+            reject(
+              new ElastiCacheIntegrationsConnectionError(
+                `opening a connection timed out after ${timeout}ms`,
+              ),
+            );
           }, timeout);
         }),
       ]);
@@ -582,25 +610,25 @@ export class PhotonSession {
   }
 
   private publishConnection(
-    connector: PhotonConnector,
+    connector: ElastiCacheIntegrationsConnector,
     initialized: { config: ResolvedConfig; evaluator: PredicateEvaluator },
   ): void {
     if (this.disconnected.has(connector) || connector.isDead) {
-      throw new PhotonConnectionError("Connection closed during initialization");
+      throw new ElastiCacheIntegrationsConnectionError("Connection closed during initialization");
     }
     // Refreshers belong to the published connection. A replacement has just authenticated
     // through HELLO, so publishing it intentionally resets both schedules and failure counts.
     const configRefresher = new Refresher(
       initialized.config.refreshInterval,
       () => this.refreshOnce(),
-      { jitter: this.reconnectPolicy.jitter, name: "photon-refresher" },
+      { jitter: this.reconnectPolicy.jitter, name: "elastiCacheIntegrations-refresher" },
     );
     const reauthRefresher = new Refresher(
       this.reconnectPolicy.authRefreshIntervalMs / 1_000,
       () => this.reauthenticateOnce(),
       {
         jitter: this.reconnectPolicy.jitter,
-        name: "photon-reauth",
+        name: "elastiCacheIntegrations-reauth",
         failureDelayMs: (failures) => this.delayFor(failures),
       },
     );
@@ -631,7 +659,7 @@ export class PhotonSession {
     await connector.reauthenticate();
   }
 
-  private handleDisconnect(connector: PhotonConnector): void {
+  private handleDisconnect(connector: ElastiCacheIntegrationsConnector): void {
     this.disconnected.add(connector);
     if (this.state !== "open" || this.connector !== connector) return;
 
@@ -664,7 +692,7 @@ export class PhotonSession {
     let attempt = 0;
     while (this.state === "open" && this.connection === "reconnecting") {
       attempt++;
-      let candidate: PhotonConnector | undefined;
+      let candidate: ElastiCacheIntegrationsConnector | undefined;
       try {
         candidate = this.createCandidate();
         const initialized = await this.initializeWithTimeout(
@@ -687,7 +715,9 @@ export class PhotonSession {
     }
   }
 
-  private async closeCandidate(candidate: PhotonConnector | undefined): Promise<void> {
+  private async closeCandidate(
+    candidate: ElastiCacheIntegrationsConnector | undefined,
+  ): Promise<void> {
     if (candidate === undefined) return;
     try {
       await candidate.close();

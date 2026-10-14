@@ -1,5 +1,5 @@
 /**
- * Core data models for the Photon client.
+ * Core data models for the ElastiCacheIntegrations client.
  *
  * These are plain data containers shared across every component (protocol, session, hooks). The
  * error taxonomy lives in `errors.ts`.
@@ -26,7 +26,7 @@ export class RequestMetadata {
 }
 
 /** An intercepted AWS SDK request to be forwarded to the cache. */
-export class PhotonRequest {
+export class ElastiCacheIntegrationsRequest {
   readonly method: string;
   readonly url: string;
   readonly headers: Record<string, HeaderValue>;
@@ -46,7 +46,7 @@ export class PhotonRequest {
       typeof options.method !== "string" ||
       typeof options.url !== "string"
     ) {
-      throw new TypeError("PhotonRequest requires string method and url");
+      throw new TypeError("ElastiCacheIntegrationsRequest requires string method and url");
     }
     if (
       options.metadata === undefined ||
@@ -54,7 +54,7 @@ export class PhotonRequest {
       typeof options.metadata.service !== "string" ||
       typeof options.metadata.operation !== "string"
     ) {
-      throw new TypeError("PhotonRequest requires metadata");
+      throw new TypeError("ElastiCacheIntegrationsRequest requires metadata");
     }
     this.method = options.method;
     this.url = options.url;
@@ -65,7 +65,7 @@ export class PhotonRequest {
 }
 
 /** A response returned by the cache, to be adapted into an SDK response. */
-export class PhotonResponse {
+export class ElastiCacheIntegrationsResponse {
   readonly statusCode: number;
   readonly headers: Record<string, string>;
   readonly body: Buffer;
@@ -77,7 +77,7 @@ export class PhotonResponse {
   }
 }
 
-/** Resolved configuration returned by the `photon.config` handshake. */
+/** Resolved configuration returned by the `aws.config` handshake. */
 export class ResolvedConfig {
   readonly version: unknown;
   /** Seconds between config refreshes. Validated as a positive integer at parse time. */

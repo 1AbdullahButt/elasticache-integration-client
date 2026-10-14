@@ -1,5 +1,5 @@
-/** Base class for all Photon errors; an optional originating `cause` is passed to native `Error`. */
-export class PhotonError extends Error {
+/** Base class for all ElastiCacheIntegrations errors; an optional originating `cause` is passed to native `Error`. */
+export class ElastiCacheIntegrationsError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = new.target.name;
@@ -7,22 +7,22 @@ export class PhotonError extends Error {
 }
 
 /** Connection bring-up failed (DNS, TCP connect, or TLS handshake). */
-export class PhotonConnectionError extends PhotonError {}
+export class ElastiCacheIntegrationsConnectionError extends ElastiCacheIntegrationsError {}
 
-/** Invalid Photon client or reconnect configuration. */
-export class PhotonConfigError extends PhotonError {}
+/** Invalid ElastiCacheIntegrations client or reconnect configuration. */
+export class ElastiCacheIntegrationsConfigError extends ElastiCacheIntegrationsError {}
 
-/** The proxy rejected the `photon.config` overrides (`CONFIG_INVALID`). */
-export class PhotonOverridesRejected extends PhotonError {}
+/** The proxy rejected the `aws.config` overrides (`CONFIG_INVALID`). */
+export class ElastiCacheIntegrationsOverridesRejected extends ElastiCacheIntegrationsError {}
 
 /** The resolved config carried a predicate this client cannot evaluate. */
-export class PhotonConfigUnevaluable extends PhotonError {}
+export class ElastiCacheIntegrationsConfigUnevaluable extends ElastiCacheIntegrationsError {}
 
 /** A RESP frame was malformed or could not be decoded. */
-export class PhotonProtocolError extends PhotonError {}
+export class ElastiCacheIntegrationsProtocolError extends ElastiCacheIntegrationsError {}
 
-/** Photon explicitly rejected a request with a RESP error reply. */
-export class PhotonRejectedError extends PhotonError {
+/** ElastiCacheIntegrations explicitly rejected a request with a RESP error reply. */
+export class ElastiCacheIntegrationsRejectedError extends ElastiCacheIntegrationsError {
   constructor(
     readonly code: string,
     message: string,
@@ -33,28 +33,28 @@ export class PhotonRejectedError extends PhotonError {
 }
 
 /** The socket died mid-flight; pending requests are failed. */
-export class PhotonConnectionLost extends PhotonError {}
+export class ElastiCacheIntegrationsConnectionLost extends ElastiCacheIntegrationsError {}
 
 /** A request exceeded its per-request timeout (named to avoid shadowing the builtin). */
-export class PhotonTimeoutError extends PhotonError {}
+export class ElastiCacheIntegrationsTimeoutError extends ElastiCacheIntegrationsError {}
 
 /** A background re-authentication was rejected or returned an invalid reply. */
-export class PhotonAuthError extends PhotonError {}
+export class ElastiCacheIntegrationsAuthError extends ElastiCacheIntegrationsError {}
 
 /**
- * Photon has no cache connection and the configured origin-fallback window expired.
+ * ElastiCacheIntegrations has no cache connection and the configured origin-fallback window expired.
  *
- * This sits outside the PhotonError hierarchy so middleware cannot mistake it
+ * This sits outside the ElastiCacheIntegrationsError hierarchy so middleware cannot mistake it
  * for a failure that is safe to pass directly to origin. Smithy's retry
  * strategy may retry it, matching Python's retryable transport error.
  */
-export class PhotonCacheUnavailable extends Error {
+export class ElastiCacheIntegrationsCacheUnavailable extends Error {
   readonly $retryable = {};
   readonly endpointUrl: string;
 
   constructor(endpointUrl: string) {
     super(
-      `Photon has no connection to the cache, so the request to endpoint "${endpointUrl}" could not be served from it.`,
+      `ElastiCacheIntegrations has no connection to the cache, so the request to endpoint "${endpointUrl}" could not be served from it.`,
     );
     this.name = new.target.name;
     this.endpointUrl = endpointUrl;

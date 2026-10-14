@@ -21,7 +21,7 @@ import {
   generateIamAuthToken,
   resolveAuthParams,
 } from "../src/auth.js";
-import { PhotonConnector } from "../src/connection.js";
+import { ElastiCacheIntegrationsConnector } from "../src/connection.js";
 
 const credentials = {
   accessKeyId: "AKIAIOSFODNN7EXAMPLE",
@@ -187,7 +187,7 @@ describe("IamAuthTokenProvider", () => {
       region: "us-east-1",
       credentials: async () => credentials,
     });
-    const connector = new PhotonConnector("my-cache", 443, {
+    const connector = new ElastiCacheIntegrationsConnector("my-cache", 443, {
       tls: false,
       authProvider: provider,
     });
