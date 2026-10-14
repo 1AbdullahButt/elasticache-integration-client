@@ -4,20 +4,20 @@ plugins {
 
 repositories {
     maven {
-        url = uri(providers.gradleProperty("photonRepository").get())
+        url = uri(providers.gradleProperty("cacheRepository").get())
     }
     mavenCentral()
 }
 
 dependencies {
     implementation(
-        "software.amazon.photon:photon-java:" +
-            providers.gradleProperty("photonVersion").get()
+        "software.amazon.elasticacheintegrations:elasticache-integrations-java:" +
+            providers.gradleProperty("cacheVersion").get()
     )
 }
 
 application {
-    mainClass.set("PhotonConsumerSmoke")
+    mainClass.set("ElastiCacheIntegrationsConsumerSmoke")
 }
 
 java {
