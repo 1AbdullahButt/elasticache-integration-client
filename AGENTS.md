@@ -2,7 +2,7 @@
 
 ## Scope
 
-- This repository contains language-specific Photon client implementations.
+- This repository contains language-specific ElastiCache Integrations client implementations.
 - Keep changes within the relevant client directory unless the change affects
   shared documentation or CI.
 - Read the package-specific `AGENTS.md` and `README.md` before editing code in
@@ -10,9 +10,9 @@
 
 ## Repository map
 
-- `node/`: TypeScript/Node.js Photon client.
-- `java/`: Java/AWS SDK v2 Photon client.
-- `python/`: Python/boto3 Photon client.
+- `node/`: TypeScript/Node.js ElastiCache Integrations client.
+- `java/`: Java/AWS SDK v2 ElastiCache Integrations client.
+- `python/`: Python/boto3 ElastiCache Integrations client.
 - `shared/`: language-neutral client contracts mirrored into packaged clients.
 - `README.md`: repository-wide overview and client scope.
 - `.github/workflows/`: CI contracts for each client.
@@ -46,7 +46,7 @@ Run commands from the client directory they apply to:
   lifecycles, and security defaults unless the change explicitly revises the
   contract.
 - Add or update focused regression coverage for changed behavior.
-- Prefer hermetic tests and local mocks over live AWS or Photon endpoints.
+- Prefer hermetic tests and local mocks over live AWS or cache endpoints.
 - Never log or commit credentials, IAM tokens, authorization headers, or other
   secret material.
 - Do not commit generated build, coverage, distribution, cache, or IDE files.
