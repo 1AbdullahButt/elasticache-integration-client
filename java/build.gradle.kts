@@ -10,7 +10,7 @@ plugins {
     id("net.ltgt.errorprone") version "5.1.1"
 }
 
-group = "software.amazon.photon"
+group = "software.amazon.elasticacheintegrations"
 version = "0.0.1"
 
 val releasePublishing = providers.gradleProperty("releasePublishing").isPresent
@@ -198,14 +198,14 @@ val verifyJars by tasks.registering {
     doLast {
         val jars = mapOf(
             tasks.jar.get().archiveFile.get().asFile to listOf(
-                "software/amazon/photon/session/PhotonClient.class",
+                "software/amazon/elasticacheintegrations/session/ElastiCacheIntegrationsClient.class",
                 "software/amazon/elasticache/auth/ElastiCacheIamAuthTokenProvider.class",
                 "idempotent-operations.json",
                 "META-INF/LICENSE",
                 "META-INF/NOTICE"
             ),
             tasks.named<AbstractArchiveTask>(sourcesJarTaskName).get().archiveFile.get().asFile to
-                listOf("software/amazon/photon/session/PhotonClient.java"),
+                listOf("software/amazon/elasticacheintegrations/session/ElastiCacheIntegrationsClient.java"),
             tasks.named<AbstractArchiveTask>(javadocJarTaskName).get().archiveFile.get().asFile to
                 listOf("index.html")
         )
