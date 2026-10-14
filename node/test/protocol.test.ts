@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PhotonError,
-  PhotonOverridesRejected,
-  PhotonProtocolError,
-  PhotonRejectedError,
+  ElastiCacheIntegrationsError,
+  ElastiCacheIntegrationsOverridesRejected,
+  ElastiCacheIntegrationsProtocolError,
+  ElastiCacheIntegrationsRejectedError,
 } from "../src/errors.js";
-import { PhotonRequest, PhotonResponse, RequestMetadata, ResolvedConfig } from "../src/models.js";
+import {
+  ElastiCacheIntegrationsRequest,
+  ElastiCacheIntegrationsResponse,
+  RequestMetadata,
+  ResolvedConfig,
+} from "../src/models.js";
 import {
   CONFIG_COMMAND,
   REQUEST_COMMAND,
@@ -15,14 +20,18 @@ import {
   normalizeHeaders,
   parseConfigResponse,
   parseRequestResponse,
+  PROTOCOL_VERSION,
   serializeConfig,
   serializeRequest,
 } from "../src/protocol.js";
 import { RespError } from "../src/resp.js";
 
-describe("Photon protocol", () => {
+describe("ElastiCacheIntegrations protocol", () => {
   it("serializes an empty config override compactly", () => {
-    expect(serializeConfig({})).toEqual([CONFIG_COMMAND, [Buffer.from("{}")]]);
+    expect(serializeConfig({})).toEqual([
+      CONFIG_COMMAND,
+      [Buffer.from(`{"version":"${PROTOCOL_VERSION}"}`)],
+    ]);
   });
 
   it.each([null, undefined])("sends no argument for %s overrides", (overrides) => {
@@ -30,11 +39,23 @@ describe("Photon protocol", () => {
     expect(serializeConfig(overrides)).toEqual([CONFIG_COMMAND, []]);
   });
 
+  it("lets a caller override the protocol version it sends", () => {
+    // The injected version is a default, not a floor: this is how a test drives a
+    // version the client would not otherwise send.
+    const [, [payload]] = serializeConfig({ version: "9.9" });
+
+    expect(JSON.parse(payload.toString())).toEqual({ version: "9.9" });
+  });
+
   it("serializes config overrides without whitespace", () => {
     const [, [payload]] = serializeConfig({ b: 2, a: 1 });
 
     expect(payload.toString()).not.toContain(" ");
-    expect(JSON.parse(payload.toString())).toEqual({ b: 2, a: 1 });
+    expect(JSON.parse(payload.toString())).toEqual({
+      version: PROTOCOL_VERSION,
+      b: 2,
+      a: 1,
+    });
   });
 
   it("parses a JSON config bulk string and preserves the wire object", () => {
@@ -93,18 +114,18 @@ describe("Photon protocol", () => {
     '{"refresh_interval":-1,"predicates":[]}',
   ])("rejects the invalid refresh_interval in %s", (body) => {
     // Invalid intervals must fail at parse time, not crash a background refresher later.
-    expect(() => parseConfigResponse(Buffer.from(body))).toThrow(PhotonError);
+    expect(() => parseConfigResponse(Buffer.from(body))).toThrow(ElastiCacheIntegrationsError);
   });
 
   it("requires request metadata at the model boundary", () => {
     expect(() => new RequestMetadata(undefined as never)).toThrow(TypeError);
     expect(() => new RequestMetadata({} as never)).toThrow(TypeError);
-    expect(() => new PhotonRequest({ method: "POST", url: "https://x/" } as never)).toThrow(
-      TypeError,
-    );
+    expect(
+      () => new ElastiCacheIntegrationsRequest({ method: "POST", url: "https://x/" } as never),
+    ).toThrow(TypeError);
     expect(
       () =>
-        new PhotonRequest({
+        new ElastiCacheIntegrationsRequest({
           method: "POST",
           url: "https://x/",
           metadata: {} as never,
@@ -122,20 +143,20 @@ describe("Photon protocol", () => {
     // Valid JSON that is not an object (for example, an array) must be rejected.
     Buffer.from("[1,2,3]"),
   ])("rejects malformed config response %#", (value) => {
-    expect(() => parseConfigResponse(value as never)).toThrow(PhotonError);
+    expect(() => parseConfigResponse(value as never)).toThrow(ElastiCacheIntegrationsError);
   });
 
-  it("maps a CONFIG_INVALID reply to PhotonOverridesRejected", () => {
+  it("maps a CONFIG_INVALID reply to ElastiCacheIntegrationsOverridesRejected", () => {
     expect(() =>
       parseConfigResponse(new RespError("CONFIG_INVALID", "table does not exist")),
-    ).toThrow(PhotonOverridesRejected);
+    ).toThrow(ElastiCacheIntegrationsOverridesRejected);
     expect(() => parseConfigResponse(new RespError("ERR", "nope"))).not.toThrow(
-      PhotonOverridesRejected,
+      ElastiCacheIntegrationsOverridesRejected,
     );
   });
 
   it("serializes a request into the five protocol arguments", () => {
-    const request = new PhotonRequest({
+    const request = new ElastiCacheIntegrationsRequest({
       method: "POST",
       url: "https://dynamodb.us-east-1.amazonaws.com/",
       headers: { "Content-Type": "application/x-amz-json-1.0" },
@@ -147,7 +168,7 @@ describe("Photon protocol", () => {
 
     // The args are exactly the 5 request args and the command name is correct.
     expect(command).toBe(REQUEST_COMMAND);
-    expect(command).toBe("photon.request");
+    expect(command).toBe("aws.request");
     expect(args).toHaveLength(5);
     expect(args).toEqual([
       Buffer.from("POST"),
@@ -159,7 +180,7 @@ describe("Photon protocol", () => {
   });
 
   it("converts string bodies during serialization", () => {
-    const request = new PhotonRequest({
+    const request = new ElastiCacheIntegrationsRequest({
       method: "POST",
       url: "https://x/",
       body: "hello",
@@ -222,22 +243,24 @@ describe("Photon protocol", () => {
   it("rejects invalid UTF-8 in response headers", () => {
     expect(() =>
       deserializeResponse([200, Buffer.from([0xff, 0x3a, 0x78]), Buffer.alloc(0)]),
-    ).toThrow(PhotonError);
+    ).toThrow(ElastiCacheIntegrationsError);
   });
 
   it("rejects invalid UTF-8 in config responses", () => {
-    expect(() => parseConfigResponse(Buffer.from([0xff]))).toThrow(PhotonError);
+    expect(() => parseConfigResponse(Buffer.from([0xff]))).toThrow(ElastiCacheIntegrationsError);
   });
 
   it("escapes non-ASCII config values like Python json.dumps", () => {
     expect(serializeConfig({ text: "café", emoji: "😀" })[1][0]).toEqual(
-      Buffer.from('{"text":"caf\\u00e9","emoji":"\\ud83d\\ude00"}'),
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","text":"caf\\u00e9","emoji":"\\ud83d\\ude00"}`),
     );
   });
 
   it("rejects non-finite config numbers instead of silently sending null", () => {
-    expect(() => serializeConfig({ nan: Number.NaN })).toThrow(PhotonError);
-    expect(() => serializeConfig({ infinity: Number.POSITIVE_INFINITY })).toThrow(PhotonError);
+    expect(() => serializeConfig({ nan: Number.NaN })).toThrow(ElastiCacheIntegrationsError);
+    expect(() => serializeConfig({ infinity: Number.POSITIVE_INFINITY })).toThrow(
+      ElastiCacheIntegrationsError,
+    );
   });
 
   it("rejects non-byte response headers and bodies", () => {
@@ -246,7 +269,7 @@ describe("Photon protocol", () => {
       [200, "content-type:application/json", Buffer.alloc(0)],
       [200, Buffer.alloc(0), "body"],
     ]) {
-      expect(() => deserializeResponse(value)).toThrow(PhotonError);
+      expect(() => deserializeResponse(value)).toThrow(ElastiCacheIntegrationsError);
     }
   });
 
@@ -257,7 +280,7 @@ describe("Photon protocol", () => {
       Buffer.from('{"k":1}'),
     ]);
 
-    expect(response).toBeInstanceOf(PhotonResponse);
+    expect(response).toBeInstanceOf(ElastiCacheIntegrationsResponse);
     expect(response.statusCode).toBe(200);
     expect(response.headers).toEqual({ "content-type": "application/json" });
     expect(response.body).toEqual(Buffer.from('{"k":1}'));
@@ -289,15 +312,17 @@ describe("Photon protocol", () => {
   });
 
   it.each([99, 600, 0, -1, 1000])("rejects status %s outside HTTP range", (status) => {
-    expect(() => deserializeResponse([status, "", ""])).toThrow(PhotonError);
+    expect(() => deserializeResponse([status, "", ""])).toThrow(ElastiCacheIntegrationsError);
   });
 
   it("rejects non-decimal statuses and malformed response shapes", () => {
-    expect(() => deserializeResponse([Buffer.from("not-a-number"), "", ""])).toThrow(PhotonError);
-    expect(() => deserializeResponse(["200.0", "", ""])).toThrow(PhotonError);
-    expect(() => deserializeResponse(["0xC8", "", ""])).toThrow(PhotonError);
+    expect(() => deserializeResponse([Buffer.from("not-a-number"), "", ""])).toThrow(
+      ElastiCacheIntegrationsError,
+    );
+    expect(() => deserializeResponse(["200.0", "", ""])).toThrow(ElastiCacheIntegrationsError);
+    expect(() => deserializeResponse(["0xC8", "", ""])).toThrow(ElastiCacheIntegrationsError);
     for (const value of [null, undefined, [], [200], [200, ""], [200, "", "", "x"]]) {
-      expect(() => deserializeResponse(value)).toThrow(PhotonError);
+      expect(() => deserializeResponse(value)).toThrow(ElastiCacheIntegrationsError);
     }
   });
 
@@ -309,25 +334,27 @@ describe("Photon protocol", () => {
     } catch (error) {
       failure = error;
     }
-    expect(failure).toBeInstanceOf(PhotonRejectedError);
-    expect((failure as PhotonRejectedError).code).toBe("ORIGIN_ERROR");
+    expect(failure).toBeInstanceOf(ElastiCacheIntegrationsRejectedError);
+    expect((failure as ElastiCacheIntegrationsRejectedError).code).toBe("ORIGIN_ERROR");
   });
 
   it("rejects non-array request responses", () => {
     // A non-array request reply, such as a bare bulk string, is malformed.
-    expect(() => parseRequestResponse(Buffer.from("not-an-array"))).toThrow(PhotonProtocolError);
+    expect(() => parseRequestResponse(Buffer.from("not-an-array"))).toThrow(
+      ElastiCacheIntegrationsProtocolError,
+    );
   });
 
   it("rejects unsupported request body types", () => {
     expect(() =>
       serializeRequest(
-        new PhotonRequest({
+        new ElastiCacheIntegrationsRequest({
           method: "POST",
           url: "https://x/",
           body: 12345 as never,
           metadata: new RequestMetadata({ service: "svc", operation: "Test" }),
         }),
       ),
-    ).toThrow(PhotonError);
+    ).toThrow(ElastiCacheIntegrationsError);
   });
 });

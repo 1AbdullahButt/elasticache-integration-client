@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { constructStack } from "@smithy/core/client";
 import type { AwsCredentialIdentity, AwsCredentialIdentityProvider } from "@smithy/types";
 
-import { PhotonConfigError } from "../src/errors.js";
+import { ElastiCacheIntegrationsConfigError } from "../src/errors.js";
 
 const mocks = vi.hoisted(() => ({
   buildCacheAuthProvider: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock("../src/auth.js", () => ({
 }));
 
 vi.mock("../src/connection.js", () => ({
-  PhotonConnector: class {
+  ElastiCacheIntegrationsConnector: class {
     constructor(...args: unknown[]) {
       mocks.connection(...args);
     }
@@ -32,7 +32,7 @@ vi.mock("../src/session.js", async () => {
   };
   return {
     ...actual,
-    PhotonSession: class {
+    ElastiCacheIntegrationsSession: class {
       constructor(...args: unknown[]) {
         mocks.sessionConstructor(...args);
         return mocks.session;
@@ -42,7 +42,7 @@ vi.mock("../src/session.js", async () => {
 });
 
 vi.mock("../src/middleware.js", () => ({
-  PhotonHandle: class {
+  ElastiCacheIntegrationsHandle: class {
     constructor(...args: unknown[]) {
       mocks.handleConstructor(...args);
       mocks.handle.install();
@@ -120,7 +120,7 @@ const options = {
 };
 
 describe("client", () => {
-  it("creates an ordinary SDK client and initializes Photon before returning", async () => {
+  it("creates an ordinary SDK client and initializes ElastiCacheIntegrations before returning", async () => {
     setup();
 
     const sdkClient = await client("dynamodb", FakeClient, options);
@@ -295,7 +295,7 @@ describe("client", () => {
 
       await expect(
         client("dynamodb", FakeClient, { ...options, stalenessDuration }),
-      ).rejects.toThrow(PhotonConfigError);
+      ).rejects.toThrow(ElastiCacheIntegrationsConfigError);
       expect(createdClients).toHaveLength(0);
       expect(mocks.sessionConstructor).not.toHaveBeenCalled();
     },

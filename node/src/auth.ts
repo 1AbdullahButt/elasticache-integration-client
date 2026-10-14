@@ -1,9 +1,9 @@
 /**
- * IAM authentication for the Photon client.
+ * IAM authentication for the ElastiCacheIntegrations client.
  *
  * Token validation, region resolution, credential resolution, and SigV4
  * signing are delegated to @aws/developer-toolkit-elasticache. This adapter
- * keeps Photon's connector-facing `(userId, token)` provider contract and
+ * keeps ElastiCacheIntegrations's connector-facing `(userId, token)` provider contract and
  * error taxonomy.
  */
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
@@ -13,7 +13,7 @@ import type {
 } from "@aws/developer-toolkit-elasticache";
 import type { AwsCredentialIdentityProvider } from "@smithy/types";
 
-import { PhotonError } from "./errors.js";
+import { ElastiCacheIntegrationsError } from "./errors.js";
 import { loadToolkit, type ToolkitModule } from "./toolkit-loader.js";
 
 /** SigV4 presign expiry used by the ElastiCache toolkit. */
@@ -62,10 +62,10 @@ export interface CacheAuthProvider {
  */
 export function resolveAuthParams(input: AuthParamsInput): ResolvedAuthParams {
   if (!input.cacheName) {
-    throw new PhotonError("cacheName is required for IAM authentication.");
+    throw new ElastiCacheIntegrationsError("cacheName is required for IAM authentication.");
   }
   if (!input.region) {
-    throw new PhotonError("region is required for IAM authentication.");
+    throw new ElastiCacheIntegrationsError("region is required for IAM authentication.");
   }
 
   return {
@@ -81,23 +81,23 @@ function toolkitDependencies(credentials: CredentialsProvider): TokenGeneratorDe
   };
 }
 
-function toPhotonError(error: unknown, toolkit: ToolkitModule): PhotonError {
+function toCacheError(error: unknown, toolkit: ToolkitModule): ElastiCacheIntegrationsError {
   if (
     error instanceof toolkit.ConfigurationError &&
     error.message.startsWith("No AWS credentials")
   ) {
-    return new PhotonError(NO_CREDENTIALS_MESSAGE, { cause: error });
+    return new ElastiCacheIntegrationsError(NO_CREDENTIALS_MESSAGE, { cause: error });
   }
   if (error instanceof toolkit.ToolkitInputError) {
-    return new PhotonError(error.message, { cause: error });
+    return new ElastiCacheIntegrationsError(error.message, { cause: error });
   }
-  return new PhotonError("Failed to generate IAM auth token", { cause: error });
+  return new ElastiCacheIntegrationsError("Failed to generate IAM auth token", { cause: error });
 }
 
 /**
  * Generate a short-lived IAM auth token for an ElastiCache Serverless cache.
  *
- * The toolkit owns token construction and validation. Photon forces its SDK
+ * The toolkit owns token construction and validation. ElastiCacheIntegrations forces its SDK
  * credential provider to refresh for every token request.
  */
 export async function generateIamAuthToken({
@@ -108,7 +108,7 @@ export async function generateIamAuthToken({
   expiresIn = TOKEN_EXPIRY_SECONDS,
 }: GenerateIamAuthTokenOptions): Promise<string> {
   if (expiresIn !== TOKEN_EXPIRY_SECONDS) {
-    throw new PhotonError(`expiresIn must be ${TOKEN_EXPIRY_SECONDS} seconds`);
+    throw new ElastiCacheIntegrationsError(`expiresIn must be ${TOKEN_EXPIRY_SECONDS} seconds`);
   }
 
   const toolkit = await loadToolkit();
@@ -122,7 +122,7 @@ export async function generateIamAuthToken({
       toolkitDependencies(credentials),
     );
   } catch (error) {
-    throw toPhotonError(error, toolkit);
+    throw toCacheError(error, toolkit);
   }
 }
 
@@ -152,7 +152,7 @@ export class IamAuthTokenProvider {
         toolkitDependencies(this.options.credentials),
       );
     } catch (error) {
-      throw toPhotonError(error, toolkit);
+      throw toCacheError(error, toolkit);
     }
   }
 
@@ -167,7 +167,7 @@ export class IamAuthTokenProvider {
     try {
       return [provider.userId, await provider.getToken()];
     } catch (error) {
-      throw toPhotonError(error, await loadToolkit());
+      throw toCacheError(error, await loadToolkit());
     }
   }
 
@@ -203,7 +203,7 @@ export async function buildCacheAuthProvider(
       try {
         return await manager.getCredentials();
       } catch (error) {
-        throw toPhotonError(error, toolkit);
+        throw toCacheError(error, toolkit);
       }
     };
     return Object.assign(getAuth, {
@@ -211,12 +211,12 @@ export async function buildCacheAuthProvider(
         try {
           return [manager.userId, await manager.refreshToken()];
         } catch (error) {
-          throw toPhotonError(error, toolkit);
+          throw toCacheError(error, toolkit);
         }
       },
       close: () => manager.close(),
     });
   } catch (error) {
-    throw toPhotonError(error, toolkit);
+    throw toCacheError(error, toolkit);
   }
 }

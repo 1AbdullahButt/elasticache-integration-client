@@ -1,15 +1,15 @@
-# Photon Node
+# ElastiCacheIntegrations Node
 
-Photon implementation done for Node.js.
+ElastiCacheIntegrations implementation done for Node.js.
 
 ## Scope
 
 This package currently ports the Python implementation's:
 
-- Photon error taxonomy and cause preservation;
+- ElastiCacheIntegrations error taxonomy and cause preservation;
 - request, response, metadata, and resolved-config models;
 - binary-safe RESP3 command encoding and decoding;
-- `photon.config` and `photon.request` serialization and parsing;
+- `aws.config` and `aws.request` serialization and parsing;
 - deterministic request-header normalization;
 - compiled CEL predicate evaluation for cacheability routing;
 - a single-connection TCP/TLS transport with FIFO response correlation,
@@ -19,18 +19,18 @@ This package currently ports the Python implementation's:
   positional/FIFO and deferred requests, bounded send backpressure,
   differentiated connect/request/initialization timeouts, idempotent close,
   and an authenticated `HELLO 3` handshake;
-- a session that performs connect, `HELLO 3 AUTH`, and the `photon.config` exchange,
+- a session that performs connect, `HELLO 3 AUTH`, and the `aws.config` exchange,
   reconnects failed transports in the background, periodically refreshes the
   config on the interval the cache returns, and controls safe origin fallback
   with a per-outage window;
 - AWS SDK v3 middleware that receives the final signed request, strips volatile
-  SigV4 headers from the Photon copy, routes dropped-connection failures to the
+  SigV4 headers from the ElastiCacheIntegrations copy, routes dropped-connection failures to the
   origin only for operations in the shared replay-safe catalog, and marks a
   healthy-connection `ORIGIN_ERROR` retryable only for those operations;
 - an async `client()` factory that returns an ordinary AWS SDK v3 client.
 
-Automatic Photon failover to another endpoint remains out of scope. Deferred
-cache responses are correlated by request ID and later `photon.response`
+Automatic ElastiCacheIntegrations failover to another endpoint remains out of scope. Deferred
+cache responses are correlated by request ID and later `aws.response`
 pushes, while callers still receive ordinary promises. The per-request timeout
 defaults to 5 seconds and can be overridden with
 `connectorOptions.requestTimeout`. A timeout for a deferred request removes only
@@ -46,12 +46,12 @@ fallback.
 
 ## Request routing
 
-Opening a Photon session compiles the CEL predicates returned by
-`photon.config`. Expressions can use the request's `service`, `operation`,
+Opening a ElastiCacheIntegrations session compiles the CEL predicates returned by
+`aws.config`. Expressions can use the request's `service`, `operation`,
 `method`, `url`, `headers`, and parsed JSON `body`, plus arbitrary values bound
 by the predicate's `vars` object.
 
-A request is sent to Photon when any predicate evaluates to `true`. Otherwise,
+A request is sent to ElastiCacheIntegrations when any predicate evaluates to `true`. Otherwise,
 the original signed SDK request continues to the configured origin transport
 without a cache round trip. Evaluation errors and malformed or non-object JSON
 bodies count as no match. A predicate that cannot be compiled is different: one
@@ -61,7 +61,7 @@ resolved. `client()` fails on such a config, a reconnect retries, and a refresh
 keeps the last good config.
 
 The predicates are compiled when the session opens and recompiled whenever a
-refresh returns a new config. A refresh sends `photon.config` with no argument,
+refresh returns a new config. A refresh sends `aws.config` with no argument,
 and a RESP3 null reply means the config is unchanged. See
 [Config staleness](#config-staleness) for what happens when refreshes fail.
 
@@ -69,7 +69,7 @@ and a RESP3 null reply means the config is unchanged. See
 
 ```ts
 import { DynamoDBClient, ListTablesCommand } from "@aws-sdk/client-dynamodb";
-import { client } from "photon-nodejs";
+import { client } from "elasticache-integrations-nodejs";
 
 const dynamodb = await client("dynamodb", DynamoDBClient, {
   endpoint: "cache.example.com:6379",
@@ -85,45 +85,45 @@ try {
 }
 ```
 
-The factory completes the authenticated `HELLO 3` and `photon.config` handshakes
+The factory completes the authenticated `HELLO 3` and `aws.config` handshakes
 before installing middleware and returning the ordinary SDK client. Wrapped AWS
-requests are fully serialized and signed by the SDK before Photon intercepts
-them. Photon strips volatile SigV4 headers only from its copied request model;
+requests are fully serialized and signed by the SDK before ElastiCacheIntegrations intercepts
+them. ElastiCacheIntegrations strips volatile SigV4 headers only from its copied request model;
 the original signed request remains untouched for origin pass-through. When the
-Photon connection drops, failures for operations in the shared replay-safe
+ElastiCacheIntegrations connection drops, failures for operations in the shared replay-safe
 catalog return to the SDK's normal origin pipeline. While the connection
 remains healthy, only an `ORIGIN_ERROR` for a cataloged operation is marked
 SDK-retryable. Other RESP errors, non-idempotent failures, and request
 validation errors and fallback-window exhaustion propagate. Calling `destroy()`
-detaches Photon before SDK teardown, rejects in-flight Photon requests without
+detaches ElastiCacheIntegrations before SDK teardown, rejects in-flight ElastiCacheIntegrations requests without
 passing shutdown failures to the origin, stops reconnect activity, and is safe
 to repeat.
 `region` and `userId` are optional and otherwise resolve from the standard
 Node.js AWS configuration. `clientConfig` and `connectorOptions` are
-Node-specific; all `photon.config` overrides are passed through `overrides`.
+Node-specific; all `aws.config` overrides are passed through `overrides`.
 `stalenessDuration` is described under [Config staleness](#config-staleness).
 
 ## Reconnection and fallback
 
 Client creation retries the initial connection a bounded number of times and
 still fails loudly if no attempt completes. After a live connection is lost,
-Photon reconnects in the background until it succeeds or the client is
+ElastiCacheIntegrations reconnects in the background until it succeeds or the client is
 destroyed. Idle socket loss starts recovery without waiting for a request.
-Every replacement resolves fresh credentials, repeats `HELLO 3 AUTH` and `photon.config`, and
+Every replacement resolves fresh credentials, repeats `HELLO 3 AUTH` and `aws.config`, and
 recompiles the resolved predicates.
 
-While there is no connection, a routed request has not been sent to Photon and
+While there is no connection, a routed request has not been sent to ElastiCacheIntegrations and
 can safely use the origin. `fallbackDuration` controls that per-outage window:
 
-| `fallbackDuration`                         | Behavior                                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `undefined` (default), `null`, or negative | Fall back indefinitely, so a cache outage does not become an application outage. |
-| Positive integer                           | Fall back for that many seconds, then raise `PhotonCacheUnavailable`.            |
-| `0`                                        | Never fall back; routed requests raise immediately while disconnected.           |
+| `fallbackDuration`                         | Behavior                                                                               |
+| ------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `undefined` (default), `null`, or negative | Fall back indefinitely, so a cache outage does not become an application outage.       |
+| Positive integer                           | Fall back for that many seconds, then raise `ElastiCacheIntegrationsCacheUnavailable`. |
+| `0`                                        | Never fall back; routed requests raise immediately while disconnected.                 |
 
 The window resets after every successful reconnect. Requests that do not match
 the resolved predicates continue to origin even after a finite window expires.
-`PhotonCacheUnavailable` is exported and marked retryable for the AWS SDK.
+`ElastiCacheIntegrationsCacheUnavailable` is exported and marked retryable for the AWS SDK.
 
 ## Config staleness
 
@@ -135,7 +135,7 @@ as confirmation.
 
 `stalenessDuration` bounds that tolerance. It is a positive whole number of
 seconds and defaults to one hour. A refresh that fails past it means the config
-can no longer be trusted, so Photon drops the connection, and bringing up the
+can no longer be trusted, so ElastiCacheIntegrations drops the connection, and bringing up the
 replacement resolves a fresh config. A refresh that succeeds restarts the
 window, so a healthy connection is never dropped. Requests fall back meanwhile
 under the `fallbackDuration` rules above. A request already in flight when the connection
@@ -173,7 +173,7 @@ the SDK client interrupts reconnect backoff and prevents further attempts.
 The `HELLO 3 AUTH` handshake normally uses `@aws/developer-toolkit-elasticache` to cache and
 automatically refresh short-lived IAM tokens from the SDK credential chain.
 The toolkit validates cache names and user IDs, normalizes them to lowercase
-before signing, and refreshes the cached token in the background. If Photon
+before signing, and refreshes the cached token in the background. If ElastiCacheIntegrations
 rejects either the initial handshake or a background AUTH refresh, it invalidates
 that token so the next authentication attempt uses a newly signed one. Destroying
 the SDK client stops background
@@ -189,11 +189,11 @@ safety margin are defined by the
 
 The `client()` factory creates this default manager, so destroying the returned
 SDK client also closes the manager and stops its timers. When
-`connectorOptions.authProvider` is supplied, Photon does not create or close
+`connectorOptions.authProvider` is supplied, ElastiCacheIntegrations does not create or close
 that provider; the caller owns its lifecycle, matching Java's explicitly
 constructed `IamAuthTokenManager`.
 
-Photon repeats `AUTH` on each live connection on a jittered 15-minute base
+ElastiCacheIntegrations repeats `AUTH` on each live connection on a jittered 15-minute base
 interval by default. A rejected refresh is retried with reconnect backoff while
 the connection keeps serving with its last valid authentication state. A
 timed-out or malformed AUTH reply drops the connection for FIFO safety and

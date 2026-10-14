@@ -1,34 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  PhotonAuthError,
-  PhotonCacheUnavailable,
-  PhotonConfigError,
-  PhotonOverridesRejected,
-  PhotonConfigUnevaluable,
-  PhotonConnectionError,
-  PhotonConnectionLost,
-  PhotonError,
-  PhotonTimeoutError,
+  ElastiCacheIntegrationsAuthError,
+  ElastiCacheIntegrationsCacheUnavailable,
+  ElastiCacheIntegrationsConfigError,
+  ElastiCacheIntegrationsOverridesRejected,
+  ElastiCacheIntegrationsConfigUnevaluable,
+  ElastiCacheIntegrationsConnectionError,
+  ElastiCacheIntegrationsConnectionLost,
+  ElastiCacheIntegrationsError,
+  ElastiCacheIntegrationsTimeoutError,
 } from "../src/errors.js";
-import { PhotonConnector } from "../src/connection.js";
-import { PhotonRequest, PhotonResponse, RequestMetadata, ResolvedConfig } from "../src/models.js";
+import { ElastiCacheIntegrationsConnector } from "../src/connection.js";
+import {
+  ElastiCacheIntegrationsRequest,
+  ElastiCacheIntegrationsResponse,
+  RequestMetadata,
+  ResolvedConfig,
+} from "../src/models.js";
+import { PROTOCOL_VERSION } from "../src/protocol.js";
 import { RespError } from "../src/resp.js";
-import { PhotonSession, parseEndpoint } from "../src/session.js";
+import { ElastiCacheIntegrationsSession, parseEndpoint } from "../src/session.js";
 import type { Refresher } from "../src/refresh.js";
 import { MockCache, MockTcpProxy } from "./mock-cache.js";
 
-function fakeConnector(overrides: Partial<PhotonConnector> = {}): PhotonConnector {
+function fakeConnector(
+  overrides: Partial<ElastiCacheIntegrationsConnector> = {},
+): ElastiCacheIntegrationsConnector {
   return {
     isReady: true,
     connect: vi.fn(async () => undefined),
     handshake: vi.fn(async () => undefined),
     reauthenticate: vi.fn(async () => undefined),
     execute: vi.fn(async (command: string, ...args: Buffer[]) => {
-      if (command !== "photon.config") {
+      if (command !== "aws.config") {
         return [200, Buffer.from("content-type:application/json"), Buffer.from("ok")];
       }
-      // A no-argument photon.config means "nothing changed", as the cache does.
+      // A no-argument aws.config means "nothing changed", as the cache does.
       if (args.length === 0) return null;
       return Buffer.from(
         '{"version":"v1","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
@@ -37,7 +45,7 @@ function fakeConnector(overrides: Partial<PhotonConnector> = {}): PhotonConnecto
     close: vi.fn(async () => undefined),
     destroy: vi.fn(() => undefined),
     ...overrides,
-  } as unknown as PhotonConnector;
+  } as unknown as ElastiCacheIntegrationsConnector;
 }
 
 function controlledConnector(
@@ -70,7 +78,7 @@ function controlledConnector(
       await options.reauthenticate?.();
     }),
     execute: vi.fn(async (command: string) => {
-      if (command === "photon.config") {
+      if (command === "aws.config") {
         if (options.config !== undefined) return options.config();
         return Buffer.from(
           JSON.stringify({
@@ -101,7 +109,7 @@ function controlledConnector(
     get isReady() {
       return !dead;
     },
-  } as unknown as PhotonConnector;
+  } as unknown as ElastiCacheIntegrationsConnector;
   return {
     connector,
     fail: () => {
@@ -111,8 +119,8 @@ function controlledConnector(
   };
 }
 
-function testRequest(): PhotonRequest {
-  return new PhotonRequest({
+function testRequest(): ElastiCacheIntegrationsRequest {
+  return new ElastiCacheIntegrationsRequest({
     method: "GET",
     url: "https://x/",
     body: "{}",
@@ -120,24 +128,24 @@ function testRequest(): PhotonRequest {
   });
 }
 
-async function waitForState(session: PhotonSession, state: string): Promise<void> {
+async function waitForState(session: ElastiCacheIntegrationsSession, state: string): Promise<void> {
   await vi.waitFor(() => {
     expect(session.connectionState).toBe(state);
   });
 }
 
 /** Reach the session's private refreshers; lifecycle assertions need them, callers do not. */
-function configRefresherOf(session: PhotonSession): Refresher | undefined {
+function configRefresherOf(session: ElastiCacheIntegrationsSession): Refresher | undefined {
   return (session as unknown as { configRefresher: Refresher | undefined }).configRefresher;
 }
 
-function reauthRefresherOf(session: PhotonSession): Refresher | undefined {
+function reauthRefresherOf(session: ElastiCacheIntegrationsSession): Refresher | undefined {
   return (session as unknown as { reauthRefresher: Refresher | undefined }).reauthRefresher;
 }
 
-describe("PhotonSession", () => {
+describe("ElastiCacheIntegrationsSession", () => {
   it("reports whether the session is open", async () => {
-    const session = new PhotonSession(fakeConnector());
+    const session = new ElastiCacheIntegrationsSession(fakeConnector());
 
     expect(session.isOpen).toBe(false);
     await session.open();
@@ -148,14 +156,17 @@ describe("PhotonSession", () => {
 
   it("opens in lifecycle order and stores the resolved config", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
     expect(session.config).toBeUndefined();
 
     await session.open();
 
     expect(connector.connect).toHaveBeenCalledOnce();
     expect(connector.handshake).toHaveBeenCalledOnce();
-    expect(connector.execute).toHaveBeenCalledWith("photon.config", Buffer.from('{"ttl":300}'));
+    expect(connector.execute).toHaveBeenCalledWith(
+      "aws.config",
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
+    );
     expect(session.config).toEqual(expect.any(ResolvedConfig));
     expect(session.config.raw).toEqual({
       version: "v1",
@@ -176,11 +187,11 @@ describe("PhotonSession", () => {
     await session.close();
   });
 
-  it("serializes requests, delegates execution, and parses PhotonResponse", async () => {
+  it("serializes requests, delegates execution, and parses ElastiCacheIntegrationsResponse", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
-    const request = new PhotonRequest({
+    const request = new ElastiCacheIntegrationsRequest({
       method: "POST",
       url: "https://x/",
       body: '{"value":"body"}',
@@ -188,14 +199,14 @@ describe("PhotonSession", () => {
     });
 
     await expect(session.request(request)).resolves.toEqual(
-      new PhotonResponse({
+      new ElastiCacheIntegrationsResponse({
         statusCode: 200,
         headers: { "content-type": "application/json" },
         body: Buffer.from("ok"),
       }),
     );
     expect(connector.execute).toHaveBeenLastCalledWith(
-      "photon.request",
+      "aws.request",
       Buffer.from("POST"),
       Buffer.from("https://x/"),
       Buffer.alloc(0),
@@ -212,7 +223,7 @@ describe("PhotonSession", () => {
     });
     const connector = fakeConnector({
       execute: vi.fn(async (command: string) =>
-        command === "photon.config"
+        command === "aws.config"
           ? Buffer.from(
               '{"version":"v1","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
             )
@@ -221,11 +232,11 @@ describe("PhotonSession", () => {
       close,
     });
     Object.defineProperty(connector, "isReady", { get: () => ready });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
 
     const response = await session.request(
-      new PhotonRequest({
+      new ElastiCacheIntegrationsRequest({
         method: "POST",
         url: "https://x/",
         body: "{}",
@@ -240,7 +251,7 @@ describe("PhotonSession", () => {
     vi.mocked(connector.execute).mockClear();
     await expect(
       session.request(
-        new PhotonRequest({
+        new ElastiCacheIntegrationsRequest({
           method: "POST",
           url: "https://x/",
           metadata: new RequestMetadata({ service: "svc", operation: "UpdateItem" }),
@@ -254,20 +265,20 @@ describe("PhotonSession", () => {
   it("declines unmatched requests without a cache round trip", async () => {
     const connector = fakeConnector({
       execute: vi.fn(async (command: string) =>
-        command === "photon.config"
+        command === "aws.config"
           ? Buffer.from(
               '{"refresh_interval":60,"predicates":[{"expr":"operation == \'GetItem\'","vars":{}}]}',
             )
           : [200, Buffer.alloc(0), Buffer.alloc(0)],
       ),
     });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     vi.mocked(connector.execute).mockClear();
 
     await expect(
       session.request(
-        new PhotonRequest({
+        new ElastiCacheIntegrationsRequest({
           method: "POST",
           url: "https://x/",
           body: "{}",
@@ -296,7 +307,7 @@ describe("PhotonSession", () => {
         }),
       });
 
-      const session = new PhotonSession(connector);
+      const session = new ElastiCacheIntegrationsSession(connector);
       await expect(session.open()).rejects.toBe(original);
       expect(connector.close).toHaveBeenCalledOnce();
     },
@@ -312,11 +323,14 @@ describe("PhotonSession", () => {
       handshake: vi.fn(),
       execute: vi.fn(() => config),
     });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     const opening = session.open();
 
     await vi.waitFor(() => {
-      expect(connector.execute).toHaveBeenCalledWith("photon.config", Buffer.from("{}"));
+      expect(connector.execute).toHaveBeenCalledWith(
+        "aws.config",
+        Buffer.from(`{"version":"${PROTOCOL_VERSION}"}`),
+      );
     });
     resolveConfig(Buffer.from('{"version":"v1","refresh_interval":60}'));
     session.destroy();
@@ -328,7 +342,7 @@ describe("PhotonSession", () => {
 
   it("makes close idempotent and destroy synchronous/idempotent", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
 
     await session.close();
@@ -336,7 +350,7 @@ describe("PhotonSession", () => {
     expect(connector.close).toHaveBeenCalledOnce();
 
     const destroyConnector = fakeConnector();
-    const destroySession = new PhotonSession(destroyConnector);
+    const destroySession = new ElastiCacheIntegrationsSession(destroyConnector);
     await destroySession.open();
     destroySession.destroy();
     destroySession.destroy();
@@ -350,7 +364,7 @@ describe("PhotonSession", () => {
       const connector = fakeConnector();
       const closeFactory = vi.fn();
       const factory = Object.assign(() => connector, { close: closeFactory });
-      const session = new PhotonSession(factory);
+      const session = new ElastiCacheIntegrationsSession(factory);
       await session.open();
 
       if (teardown === "close") {
@@ -367,15 +381,17 @@ describe("PhotonSession", () => {
 
   it("delegates requests after close to the connector", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     await session.close();
     vi.mocked(connector.execute).mockClear();
-    vi.mocked(connector.execute).mockRejectedValue(new PhotonError("connection is closed"));
+    vi.mocked(connector.execute).mockRejectedValue(
+      new ElastiCacheIntegrationsError("connection is closed"),
+    );
 
     await expect(
       session.request(
-        new PhotonRequest({
+        new ElastiCacheIntegrationsRequest({
           method: "POST",
           url: "https://x/",
           metadata: new RequestMetadata({ service: "svc", operation: "Test" }),
@@ -396,7 +412,7 @@ describe("PhotonSession", () => {
       delays.push(delay ?? 0);
       return realSetTimeout(callback, delay, ...args);
     }) as typeof setTimeout);
-    const session = new PhotonSession(fakeConnector());
+    const session = new ElastiCacheIntegrationsSession(fakeConnector());
 
     try {
       await session.open();
@@ -425,7 +441,7 @@ describe("PhotonSession", () => {
       delays.push(delay ?? 0);
       return realSetTimeout(callback, delay, ...args);
     }) as typeof setTimeout);
-    const session = new PhotonSession(fakeConnector(), {}, { jitter: 0 });
+    const session = new ElastiCacheIntegrationsSession(fakeConnector(), {}, { jitter: 0 });
 
     try {
       await session.open();
@@ -441,10 +457,10 @@ describe("PhotonSession", () => {
   it("does not start a refresher when opening fails", async () => {
     const connector = fakeConnector({
       execute: vi.fn(async () => {
-        throw new PhotonError("config failed");
+        throw new ElastiCacheIntegrationsError("config failed");
       }),
     });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
 
     await expect(session.open()).rejects.toThrow("config failed");
     expect(configRefresherOf(session)).toBeUndefined();
@@ -454,7 +470,7 @@ describe("PhotonSession", () => {
 
   it("re-authenticates the live connector", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     vi.mocked(connector.reauthenticate).mockClear();
 
@@ -465,13 +481,13 @@ describe("PhotonSession", () => {
   });
 
   it("propagates a re-AUTH rejection so the refresher applies backoff", async () => {
-    const rejection = new PhotonAuthError("IAM AUTH rejected: WRONGPASS");
+    const rejection = new ElastiCacheIntegrationsAuthError("IAM AUTH rejected: WRONGPASS");
     const connector = fakeConnector({
       reauthenticate: vi.fn(async () => {
         throw rejection;
       }),
     });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
 
     await expect(reauthenticateOnce(session)).rejects.toBe(rejection);
@@ -480,12 +496,12 @@ describe("PhotonSession", () => {
 
   it("skips re-AUTH while reconnecting", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     vi.mocked(connector.reauthenticate).mockClear();
     const internals = session as unknown as {
       connection: "alive" | "reconnecting";
-      connector: PhotonConnector | undefined;
+      connector: ElastiCacheIntegrationsConnector | undefined;
     };
     internals.connection = "reconnecting";
     internals.connector = undefined;
@@ -502,16 +518,20 @@ describe("PhotonSession", () => {
     const initial = controlledConnector();
     const replacement = controlledConnector();
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(replacement.connector);
-    const session = new PhotonSession(factory, {}, { baseDelayMs: 1, maxDelayMs: 1, jitter: 0 });
+    const session = new ElastiCacheIntegrationsSession(
+      factory,
+      {},
+      { baseDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    );
     await session.open();
     const refresher = configRefresherOf(session);
     if (refresher === undefined) throw new Error("expected a refresher");
     const stop = vi.spyOn(refresher, "stop");
     vi.mocked(initial.connector.execute).mockRejectedValue(
-      new PhotonTimeoutError("request timed out during refresh"),
+      new ElastiCacheIntegrationsTimeoutError("request timed out during refresh"),
     );
 
     await refreshOnce(session);
@@ -530,12 +550,16 @@ describe("PhotonSession", () => {
     await cache.start();
     const factory = vi.fn(
       () =>
-        new PhotonConnector(cache.host, cache.port!, {
+        new ElastiCacheIntegrationsConnector(cache.host, cache.port!, {
           tls: false,
           authProvider: () => ["test-user", "test-token"],
         }),
     );
-    const session = new PhotonSession(factory, {}, { baseDelayMs: 1, maxDelayMs: 1, jitter: 0 });
+    const session = new ElastiCacheIntegrationsSession(
+      factory,
+      {},
+      { baseDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    );
     try {
       await session.open();
       cache.noArgConfigFrame = Buffer.from("_unexpected\r\n");
@@ -555,7 +579,7 @@ describe("PhotonSession", () => {
     let rejectRefresh!: (error: unknown) => void;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     vi.mocked(connector.execute).mockImplementation(
       () =>
@@ -566,7 +590,7 @@ describe("PhotonSession", () => {
 
     const refreshing = refreshOnce(session);
     await session.close();
-    rejectRefresh(new PhotonConnectionLost("connection closed"));
+    rejectRefresh(new ElastiCacheIntegrationsConnectionLost("connection closed"));
     await refreshing;
 
     expect(warn).not.toHaveBeenCalled();
@@ -577,7 +601,7 @@ describe("PhotonSession", () => {
     "stops both refreshers before tearing the connector down on %s",
     async (teardown) => {
       const connector = fakeConnector();
-      const session = new PhotonSession(connector);
+      const session = new ElastiCacheIntegrationsSession(connector);
       await session.open();
       const refresher = configRefresherOf(session);
       const reauthRefresher = reauthRefresherOf(session);
@@ -607,7 +631,7 @@ describe("PhotonSession", () => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
     let finishRefresh!: () => void;
-    const session = new PhotonSession(fakeConnector());
+    const session = new ElastiCacheIntegrationsSession(fakeConnector());
     const refreshOnce = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -640,8 +664,8 @@ describe("PhotonSession", () => {
 
   it("enforces the CREATED -> OPEN -> CLOSED lifecycle", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
-    const request = new PhotonRequest({
+    const session = new ElastiCacheIntegrationsSession(connector);
+    const request = new ElastiCacheIntegrationsRequest({
       method: "POST",
       url: "https://x/",
       metadata: new RequestMetadata({ service: "svc", operation: "Test" }),
@@ -657,21 +681,21 @@ describe("PhotonSession", () => {
   it("retries initial connection attempts before succeeding", async () => {
     const first = controlledConnector({
       connect: async () => {
-        throw new PhotonConnectionError("first");
+        throw new ElastiCacheIntegrationsConnectionError("first");
       },
     });
     const second = controlledConnector({
       connect: async () => {
-        throw new PhotonConnectionError("second");
+        throw new ElastiCacheIntegrationsConnectionError("second");
       },
     });
     const third = controlledConnector();
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(first.connector)
       .mockReturnValueOnce(second.connector)
       .mockReturnValue(third.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -692,14 +716,14 @@ describe("PhotonSession", () => {
   });
 
   it("fails startup after the configured attempt limit", async () => {
-    const factory = vi.fn<() => PhotonConnector>(() => {
+    const factory = vi.fn<() => ElastiCacheIntegrationsConnector>(() => {
       return controlledConnector({
         connect: async () => {
-          throw new PhotonConnectionError("unavailable");
+          throw new ElastiCacheIntegrationsConnectionError("unavailable");
         },
       }).connector;
     });
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -718,10 +742,10 @@ describe("PhotonSession", () => {
   it("bounds the complete initial connect, HELLO, and config attempt", async () => {
     const cache = new MockCache({ failure: "hang", failureCommand: "hello" });
     await cache.start();
-    const connectors: PhotonConnector[] = [];
-    const session = new PhotonSession(
+    const connectors: ElastiCacheIntegrationsConnector[] = [];
+    const session = new ElastiCacheIntegrationsSession(
       () => {
-        const connector = new PhotonConnector(cache.host, cache.port!, {
+        const connector = new ElastiCacheIntegrationsConnector(cache.host, cache.port!, {
           tls: false,
           configTimeout: 5_000,
           authProvider: () => ["test-user", "test-token"],
@@ -750,11 +774,11 @@ describe("PhotonSession", () => {
   it("does not replay a failed request and reconnects in the background", async () => {
     const initial = controlledConnector();
     vi.mocked(initial.connector.execute).mockImplementation(async (command: string) => {
-      if (command === "photon.config") {
+      if (command === "aws.config") {
         return Buffer.from('{"refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}');
       }
       initial.fail();
-      throw new PhotonConnectionLost("connection dropped");
+      throw new ElastiCacheIntegrationsConnectionLost("connection dropped");
     });
     let allowReconnect!: () => void;
     const reconnectGate = new Promise<void>((resolve) => {
@@ -762,10 +786,10 @@ describe("PhotonSession", () => {
     });
     const replacement = controlledConnector({ connect: () => reconnectGate });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(replacement.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -777,7 +801,7 @@ describe("PhotonSession", () => {
     await session.open();
 
     const failed = session.request(testRequest());
-    await expect(failed).rejects.toBeInstanceOf(PhotonConnectionLost);
+    await expect(failed).rejects.toBeInstanceOf(ElastiCacheIntegrationsConnectionLost);
     await vi.waitFor(() => {
       expect(replacement.connector.connect).toHaveBeenCalledOnce();
     });
@@ -786,7 +810,7 @@ describe("PhotonSession", () => {
     allowReconnect();
     await waitForState(session, "alive");
     await expect(session.request(testRequest())).resolves.toEqual(
-      new PhotonResponse({
+      new ElastiCacheIntegrationsResponse({
         statusCode: 200,
         headers: { "content-type": "application/json" },
         body: Buffer.from("ok"),
@@ -806,10 +830,10 @@ describe("PhotonSession", () => {
     });
     const replacement = controlledConnector({ connect: () => reconnectGate });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(replacement.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -843,7 +867,7 @@ describe("PhotonSession", () => {
     const authProvider = vi.fn(async () => ["test-user", "test-token"] as [string, string]);
     const factory = vi.fn(
       () =>
-        new PhotonConnector(proxy.host, proxy.port!, {
+        new ElastiCacheIntegrationsConnector(proxy.host, proxy.port!, {
           tls: false,
           connectTimeout: 500,
           configTimeout: 500,
@@ -851,7 +875,7 @@ describe("PhotonSession", () => {
           authProvider,
         }),
     );
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -876,9 +900,7 @@ describe("PhotonSession", () => {
         body: Buffer.from("reconnected"),
       });
       expect(authProvider).toHaveBeenCalledTimes(2);
-      expect(cache.photonCommandLog.filter((command) => command === "photon.config")).toHaveLength(
-        2,
-      );
+      expect(cache.cacheCommandLog.filter((command) => command === "aws.config")).toHaveLength(2);
     } finally {
       await session.close();
       await proxy.stop();
@@ -889,16 +911,16 @@ describe("PhotonSession", () => {
   it("keeps reconnecting until a later attempt succeeds", async () => {
     const initial = controlledConnector();
     let calls = 0;
-    const factory = vi.fn<() => PhotonConnector>(() => {
+    const factory = vi.fn<() => ElastiCacheIntegrationsConnector>(() => {
       calls++;
       if (calls === 1) return initial.connector;
       return controlledConnector({
         connect: async () => {
-          if (calls < 6) throw new PhotonConnectionError("unavailable");
+          if (calls < 6) throw new ElastiCacheIntegrationsConnectionError("unavailable");
         },
       }).connector;
     });
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -917,16 +939,16 @@ describe("PhotonSession", () => {
 
   it("allows origin fallback indefinitely by default while reconnecting", async () => {
     const initial = controlledConnector();
-    const factory = vi.fn<() => PhotonConnector>(() =>
+    const factory = vi.fn<() => ElastiCacheIntegrationsConnector>(() =>
       factory.mock.calls.length === 1
         ? initial.connector
         : controlledConnector({
             connect: async () => {
-              throw new PhotonConnectionError("unavailable");
+              throw new ElastiCacheIntegrationsConnectionError("unavailable");
             },
           }).connector,
     );
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -944,18 +966,18 @@ describe("PhotonSession", () => {
     await session.close();
   });
 
-  it("allows finite fallback and then raises PhotonCacheUnavailable", async () => {
+  it("allows finite fallback and then raises ElastiCacheIntegrationsCacheUnavailable", async () => {
     const initial = controlledConnector();
-    const factory = vi.fn<() => PhotonConnector>(() =>
+    const factory = vi.fn<() => ElastiCacheIntegrationsConnector>(() =>
       factory.mock.calls.length === 1
         ? initial.connector
         : controlledConnector({
             connect: async () => {
-              throw new PhotonConnectionError("unavailable");
+              throw new ElastiCacheIntegrationsConnectionError("unavailable");
             },
           }).connector,
     );
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -970,14 +992,14 @@ describe("PhotonSession", () => {
 
     await expect(session.request(testRequest())).resolves.toBeUndefined();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const request = new PhotonRequest({
+    const request = new ElastiCacheIntegrationsRequest({
       method: "GET",
       url: "https://user:secret@x:8443/path?token=sensitive",
       body: "{}",
       metadata: new RequestMetadata({ service: "svc", operation: "GetItem" }),
     });
     const error = await session.request(request).catch((cause: unknown) => cause);
-    expect(error).toBeInstanceOf(PhotonCacheUnavailable);
+    expect(error).toBeInstanceOf(ElastiCacheIntegrationsCacheUnavailable);
     expect(error).toMatchObject({ endpointUrl: "https://x:8443" });
     expect(String(error)).not.toContain("secret");
     expect(String(error)).not.toContain("token");
@@ -988,14 +1010,14 @@ describe("PhotonSession", () => {
     const initial = controlledConnector();
     const replacement = controlledConnector({
       connect: async () => {
-        throw new PhotonConnectionError("unavailable");
+        throw new ElastiCacheIntegrationsConnectionError("unavailable");
       },
     });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(replacement.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -1008,24 +1030,26 @@ describe("PhotonSession", () => {
     await session.open();
     initial.fail();
 
-    await expect(session.request(testRequest())).rejects.toBeInstanceOf(PhotonCacheUnavailable);
+    await expect(session.request(testRequest())).rejects.toBeInstanceOf(
+      ElastiCacheIntegrationsCacheUnavailable,
+    );
     await session.close();
   });
 
   it("does not escalate an unmatched request during an outage", async () => {
     const initial = controlledConnector({ predicate: "false" });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockImplementation(
         () =>
           controlledConnector({
             connect: async () => {
-              throw new PhotonConnectionError("unavailable");
+              throw new ElastiCacheIntegrationsConnectionError("unavailable");
             },
           }).connector,
       );
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -1046,10 +1070,10 @@ describe("PhotonSession", () => {
     const initial = controlledConnector({ predicate: "true" });
     const replacement = controlledConnector({ predicate: "false" });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(replacement.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -1072,14 +1096,14 @@ describe("PhotonSession", () => {
     const initial = controlledConnector();
     const failedReplacement = controlledConnector({
       connect: async () => {
-        throw new PhotonConnectionError("unavailable");
+        throw new ElastiCacheIntegrationsConnectionError("unavailable");
       },
     });
     const factory = vi
-      .fn<() => PhotonConnector>()
+      .fn<() => ElastiCacheIntegrationsConnector>()
       .mockReturnValueOnce(initial.connector)
       .mockReturnValue(failedReplacement.connector);
-    const session = new PhotonSession(
+    const session = new ElastiCacheIntegrationsSession(
       factory,
       {},
       {
@@ -1118,10 +1142,10 @@ describe("PhotonSession", () => {
         ...(failure === "handshake" ? { handshake: never } : { config: never }),
       });
       const factory = vi
-        .fn<() => PhotonConnector>()
+        .fn<() => ElastiCacheIntegrationsConnector>()
         .mockReturnValueOnce(initial.connector)
         .mockReturnValue(replacement.connector);
-      const session = new PhotonSession(
+      const session = new ElastiCacheIntegrationsSession(
         factory,
         {},
         {
@@ -1139,8 +1163,8 @@ describe("PhotonSession", () => {
           expect(replacement.connector.handshake).toHaveBeenCalledOnce();
         } else {
           expect(replacement.connector.execute).toHaveBeenCalledWith(
-            "photon.config",
-            Buffer.from("{}"),
+            "aws.config",
+            Buffer.from(`{"version":"${PROTOCOL_VERSION}"}`),
           );
         }
       });
@@ -1157,55 +1181,77 @@ describe("PhotonSession", () => {
     const connector = fakeConnector();
     const aboveTimerLimit = 2_147_483_648;
 
-    expect(() => new PhotonSession(() => connector, {}, { connectAttempts: 0 })).toThrow(
-      PhotonConfigError,
-    );
-    expect(() => new PhotonSession(() => connector, {}, { baseDelayMs: 0 })).toThrow(
-      "greater than zero",
-    );
     expect(
-      () => new PhotonSession(() => connector, {}, { connectionTimeoutMs: aboveTimerLimit }),
+      () => new ElastiCacheIntegrationsSession(() => connector, {}, { connectAttempts: 0 }),
+    ).toThrow(ElastiCacheIntegrationsConfigError);
+    expect(
+      () => new ElastiCacheIntegrationsSession(() => connector, {}, { baseDelayMs: 0 }),
+    ).toThrow("greater than zero");
+    expect(
+      () =>
+        new ElastiCacheIntegrationsSession(
+          () => connector,
+          {},
+          { connectionTimeoutMs: aboveTimerLimit },
+        ),
     ).toThrow("at most 2147483647");
     expect(
-      () => new PhotonSession(() => connector, {}, { authRefreshIntervalMs: aboveTimerLimit }),
+      () =>
+        new ElastiCacheIntegrationsSession(
+          () => connector,
+          {},
+          { authRefreshIntervalMs: aboveTimerLimit },
+        ),
     ).toThrow("at most 2147483647");
-    expect(() => new PhotonSession(() => connector, {}, { authRefreshIntervalMs: 0 })).toThrow(
-      "greater than zero",
-    );
     expect(
-      () => new PhotonSession(() => connector, {}, { authRefreshIntervalMs: 2_000_000_000 }),
+      () => new ElastiCacheIntegrationsSession(() => connector, {}, { authRefreshIntervalMs: 0 }),
+    ).toThrow("greater than zero");
+    expect(
+      () =>
+        new ElastiCacheIntegrationsSession(
+          () => connector,
+          {},
+          { authRefreshIntervalMs: 2_000_000_000 },
+        ),
     ).toThrow(
       expect.objectContaining({
-        name: "PhotonConfigError",
+        name: "ElastiCacheIntegrationsConfigError",
         message: expect.stringContaining("after jitter is applied"),
       }),
     );
     expect(
       () =>
-        new PhotonSession(() => connector, {}, { authRefreshIntervalMs: 2_000_000_000, jitter: 0 }),
+        new ElastiCacheIntegrationsSession(
+          () => connector,
+          {},
+          { authRefreshIntervalMs: 2_000_000_000, jitter: 0 },
+        ),
     ).not.toThrow();
-    expect(() => new PhotonSession(() => connector, {}, { baseDelayMs: aboveTimerLimit })).toThrow(
-      "at most 2147483647",
-    );
-    expect(() => new PhotonSession(() => connector, {}, { maxDelayMs: aboveTimerLimit })).toThrow(
-      "at most 2147483647",
-    );
     expect(
-      () => new PhotonSession(() => connector, {}, { baseDelayMs: 10, maxDelayMs: 5 }),
+      () =>
+        new ElastiCacheIntegrationsSession(() => connector, {}, { baseDelayMs: aboveTimerLimit }),
+    ).toThrow("at most 2147483647");
+    expect(
+      () =>
+        new ElastiCacheIntegrationsSession(() => connector, {}, { maxDelayMs: aboveTimerLimit }),
+    ).toThrow("at most 2147483647");
+    expect(
+      () =>
+        new ElastiCacheIntegrationsSession(() => connector, {}, { baseDelayMs: 10, maxDelayMs: 5 }),
     ).toThrow("at least baseDelayMs");
-    expect(() => new PhotonSession(() => connector, {}, { jitter: 1 })).toThrow(
+    expect(() => new ElastiCacheIntegrationsSession(() => connector, {}, { jitter: 1 })).toThrow(
       "jitter must be in [0, 1)",
     );
-    expect(() => new PhotonSession(() => connector, {}, { fallbackDurationMs: 0.5 })).toThrow(
-      "whole number",
-    );
-    expect(() => new PhotonSession(() => connector, {}, { fallbackDurationMs: -0.5 })).toThrow(
-      "whole number",
-    );
+    expect(
+      () => new ElastiCacheIntegrationsSession(() => connector, {}, { fallbackDurationMs: 0.5 }),
+    ).toThrow("whole number");
+    expect(
+      () => new ElastiCacheIntegrationsSession(() => connector, {}, { fallbackDurationMs: -0.5 }),
+    ).toThrow("whole number");
 
     const random = vi.spyOn(Math, "random").mockReturnValue(0.999);
     try {
-      const session = new PhotonSession(
+      const session = new ElastiCacheIntegrationsSession(
         () => connector,
         {},
         { baseDelayMs: 2_147_483_647, maxDelayMs: 2_147_483_647, jitter: 0.999 },
@@ -1223,12 +1269,12 @@ describe("PhotonSession", () => {
 });
 
 /** Invoke the session's private refresh cycle directly, as the refresher's timer would. */
-function refreshOnce(session: PhotonSession): Promise<void> {
+function refreshOnce(session: ElastiCacheIntegrationsSession): Promise<void> {
   return (session as unknown as { refreshOnce: () => Promise<void> }).refreshOnce();
 }
 
 /** Invoke one background authentication refresh directly. */
-function reauthenticateOnce(session: PhotonSession): Promise<void> {
+function reauthenticateOnce(session: ElastiCacheIntegrationsSession): Promise<void> {
   return (
     session as unknown as {
       reauthenticateOnce: () => Promise<void>;
@@ -1243,8 +1289,8 @@ const REFRESHED_CONFIG = Buffer.from(
 // Short enough to read, long enough that only a deliberate advance reaches it.
 const STALENESS_WINDOW_MS = 10_000;
 
-function putItem(): PhotonRequest {
-  return new PhotonRequest({
+function putItem(): ElastiCacheIntegrationsRequest {
+  return new ElastiCacheIntegrationsRequest({
     method: "POST",
     url: "https://x/",
     body: "{}",
@@ -1252,23 +1298,23 @@ function putItem(): PhotonRequest {
   });
 }
 
-describe("PhotonSession config refresh", () => {
-  it("re-issues photon.config with no argument after the handshake", async () => {
+describe("ElastiCacheIntegrationsSession config refresh", () => {
+  it("re-issues aws.config with no argument after the handshake", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
     await session.open();
     vi.mocked(connector.execute).mockClear();
 
     await refreshOnce(session);
 
     expect(connector.execute).toHaveBeenCalledOnce();
-    expect(connector.execute).toHaveBeenCalledWith("photon.config");
+    expect(connector.execute).toHaveBeenCalledWith("aws.config");
     await session.close();
   });
 
   it("resends the overrides until a parseable config acknowledges them", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
     await session.open();
     // Simulate a session whose overrides the cache has not confirmed yet.
     (session as unknown as { overridesSent: boolean }).overridesSent = false;
@@ -1282,20 +1328,20 @@ describe("PhotonSession config refresh", () => {
     expect(connector.execute).toHaveBeenCalledTimes(2);
     expect(connector.execute).toHaveBeenNthCalledWith(
       1,
-      "photon.config",
-      Buffer.from('{"ttl":300}'),
+      "aws.config",
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
     );
-    expect(connector.execute).toHaveBeenNthCalledWith(2, "photon.config");
+    expect(connector.execute).toHaveBeenNthCalledWith(2, "aws.config");
     await session.close();
   });
 
   it.each([
-    ["a failed send", () => Promise.reject(new PhotonError("send failed"))],
+    ["a failed send", () => Promise.reject(new ElastiCacheIntegrationsError("send failed"))],
     ["a malformed reply", () => Promise.resolve(Buffer.from('{"version":"v2"}'))],
   ])("sends unacknowledged overrides again after %s", async (_name, reply) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
     await session.open();
     // Simulate a session whose overrides the cache has not confirmed yet.
     (session as unknown as { overridesSent: boolean }).overridesSent = false;
@@ -1310,7 +1356,10 @@ describe("PhotonSession config refresh", () => {
     vi.mocked(connector.execute).mockResolvedValue(REFRESHED_CONFIG);
     await refreshOnce(session);
 
-    expect(connector.execute).toHaveBeenCalledWith("photon.config", Buffer.from('{"ttl":300}'));
+    expect(connector.execute).toHaveBeenCalledWith(
+      "aws.config",
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
+    );
     expect((session as unknown as { overridesSent: boolean }).overridesSent).toBe(true);
     warn.mockRestore();
     await session.close();
@@ -1318,7 +1367,7 @@ describe("PhotonSession config refresh", () => {
 
   it("treats a null reply as unchanged", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     vi.mocked(connector.execute).mockResolvedValue(null);
@@ -1331,7 +1380,7 @@ describe("PhotonSession config refresh", () => {
 
   it("installs a server-side config change and its predicates", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     // The opening config matches everything; the refreshed one only matches GetItem.
     await expect(session.request(putItem())).resolves.toBeDefined();
@@ -1347,7 +1396,7 @@ describe("PhotonSession config refresh", () => {
 
   it("reschedules the refresher on the refreshed interval", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const refresher = configRefresherOf(session);
     if (refresher === undefined) throw new Error("expected a refresher");
@@ -1361,13 +1410,16 @@ describe("PhotonSession config refresh", () => {
   });
 
   it.each([
-    ["a failed command", () => Promise.reject(new PhotonError("photon.config failed"))],
+    [
+      "a failed command",
+      () => Promise.reject(new ElastiCacheIntegrationsError("aws.config failed")),
+    ],
     ["a malformed reply", () => Promise.resolve(Buffer.from("not json"))],
     ["a config missing refresh_interval", () => Promise.resolve(Buffer.from('{"version":"v2"}'))],
   ])("keeps the last known-good config after %s", async (_name, reply) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     const refresher = configRefresherOf(session);
@@ -1379,7 +1431,7 @@ describe("PhotonSession config refresh", () => {
 
     expect(session.config).toBe(config);
     expect(session.isOpen).toBe(true);
-    // The predicates from the opening config still route requests to Photon.
+    // The predicates from the opening config still route requests to ElastiCacheIntegrations.
     vi.mocked(connector.execute).mockResolvedValue([200, Buffer.alloc(0), Buffer.alloc(0)]);
     await expect(session.request(putItem())).resolves.toBeDefined();
     expect(setInterval).not.toHaveBeenCalled();
@@ -1391,7 +1443,7 @@ describe("PhotonSession config refresh", () => {
   it("keeps the whole previous config when the new interval cannot be scheduled", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     // An interval whose jittered delay exceeds Node's maximum schedulable timeout.
@@ -1402,7 +1454,7 @@ describe("PhotonSession config refresh", () => {
     await expect(refreshOnce(session)).resolves.toBeUndefined();
 
     expect(session.config).toBe(config);
-    // The opening config's predicates still route requests to Photon.
+    // The opening config's predicates still route requests to ElastiCacheIntegrations.
     vi.mocked(connector.execute).mockResolvedValue([200, Buffer.alloc(0), Buffer.alloc(0)]);
     await expect(session.request(putItem())).resolves.toBeDefined();
     expect(warn).toHaveBeenCalledOnce();
@@ -1410,11 +1462,11 @@ describe("PhotonSession config refresh", () => {
     await session.close();
   });
 
-  it("propagates a non-Photon error so the refresher can swallow it", async () => {
+  it("propagates a non-ElastiCacheIntegrations error so the refresher can swallow it", async () => {
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
-    const failure = new Error("not a PhotonError");
+    const failure = new Error("not a ElastiCacheIntegrationsError");
     vi.mocked(connector.execute).mockRejectedValue(failure);
 
     await expect(refreshOnce(session)).rejects.toBe(failure);
@@ -1424,8 +1476,11 @@ describe("PhotonSession config refresh", () => {
   // --- refresh: the staleness window ---
 
   /** A session whose config stops being trusted `STALENESS_WINDOW_MS` after it is confirmed. */
-  function staleSession(connector: PhotonConnector, clock: { now: number }): PhotonSession {
-    return new PhotonSession(
+  function staleSession(
+    connector: ElastiCacheIntegrationsConnector,
+    clock: { now: number },
+  ): ElastiCacheIntegrationsSession {
+    return new ElastiCacheIntegrationsSession(
       connector,
       {},
       { stalenessDurationMs: STALENESS_WINDOW_MS, clock: () => clock.now },
@@ -1538,7 +1593,7 @@ describe("PhotonSession config refresh", () => {
   it("alarms at once on CONFIG_INVALID but keeps the connection and config", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     vi.mocked(connector.execute).mockResolvedValue(
@@ -1558,7 +1613,7 @@ describe("PhotonSession config refresh", () => {
   it("alarms at once on an unevaluable config and installs none of it", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     const refresher = configRefresherOf(session);
@@ -1612,17 +1667,17 @@ describe("PhotonSession config refresh", () => {
     [
       "a CONFIG_INVALID reply",
       new RespError("CONFIG_INVALID", "table does not exist"),
-      PhotonOverridesRejected,
+      ElastiCacheIntegrationsOverridesRejected,
     ],
     [
       "an unevaluable config",
       Buffer.from('{"version":"v1","refresh_interval":60,"predicates":[{"expr":"(("}]}'),
-      PhotonConfigUnevaluable,
+      ElastiCacheIntegrationsConfigUnevaluable,
     ],
   ])("fails to open on %s and alarms at error level", async (_, reply, ErrorType) => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const connector = fakeConnector({ execute: vi.fn(async () => reply) });
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
 
     await expect(session.open()).rejects.toBeInstanceOf(ErrorType);
     expect(configRefresherOf(session)).toBeUndefined();
@@ -1631,7 +1686,7 @@ describe("PhotonSession config refresh", () => {
   });
 
   it("propagates an in-flight request error when it races a stale drop", async () => {
-    // request() itself cannot tell whether this request already reached Photon before the
+    // request() itself cannot tell whether this request already reached ElastiCacheIntegrations before the
     // connector closed, so it must not silently convert the failure into an origin fallback: only
     // the middleware knows whether the request is idempotent enough to safely retry.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -1641,7 +1696,7 @@ describe("PhotonSession config refresh", () => {
     await session.open();
 
     let rejectRequest!: (error: unknown) => void;
-    const connectionLost = new PhotonConnectionLost("connection closed");
+    const connectionLost = new ElastiCacheIntegrationsConnectionLost("connection closed");
     vi.mocked(connector.execute)
       .mockImplementationOnce(
         () =>
@@ -1671,7 +1726,7 @@ describe("PhotonSession config refresh", () => {
   it("does not install a config that arrives after teardown", async () => {
     let resolveConfig!: (value: Buffer) => void;
     const connector = fakeConnector();
-    const session = new PhotonSession(connector);
+    const session = new ElastiCacheIntegrationsSession(connector);
     await session.open();
     const config = session.config;
     vi.mocked(connector.execute).mockImplementation(
@@ -1709,6 +1764,6 @@ describe("parseEndpoint", () => {
     "host:0",
     "host:65536",
   ])("rejects invalid endpoint %s", (endpoint) => {
-    expect(() => parseEndpoint(endpoint)).toThrow(PhotonError);
+    expect(() => parseEndpoint(endpoint)).toThrow(ElastiCacheIntegrationsError);
   });
 });

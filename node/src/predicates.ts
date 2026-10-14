@@ -2,8 +2,8 @@ import { TextDecoder } from "node:util";
 
 import { Environment, type ParseResult } from "@marcbachmann/cel-js";
 
-import { PhotonConfigUnevaluable } from "./errors.js";
-import type { PhotonRequest } from "./models.js";
+import { ElastiCacheIntegrationsConfigUnevaluable } from "./errors.js";
+import type { ElastiCacheIntegrationsRequest } from "./models.js";
 
 interface CompiledPredicate {
   expression: ParseResult;
@@ -37,10 +37,10 @@ function parseBody(body: Buffer | string | null): Record<string, unknown> | unde
 
 function compilePredicate(entry: unknown): CompiledPredicate {
   if (!isRecord(entry)) {
-    throw new PhotonConfigUnevaluable("Predicate entry is not an object");
+    throw new ElastiCacheIntegrationsConfigUnevaluable("Predicate entry is not an object");
   }
   if (typeof entry.expr !== "string") {
-    throw new PhotonConfigUnevaluable("Predicate entry has no string 'expr'");
+    throw new ElastiCacheIntegrationsConfigUnevaluable("Predicate entry has no string 'expr'");
   }
   const variables = isRecord(entry.vars) ? entry.vars : {};
 
@@ -60,13 +60,13 @@ function compilePredicate(entry: unknown): CompiledPredicate {
     expression = environment.parse(entry.expr);
     valid = expression.check().valid;
   } catch (cause) {
-    throw new PhotonConfigUnevaluable(
+    throw new ElastiCacheIntegrationsConfigUnevaluable(
       `Predicate expression cannot be compiled: ${JSON.stringify(entry.expr)}`,
       { cause },
     );
   }
   if (!valid) {
-    throw new PhotonConfigUnevaluable(
+    throw new ElastiCacheIntegrationsConfigUnevaluable(
       `Predicate expression cannot be compiled: ${JSON.stringify(entry.expr)}`,
     );
   }
@@ -74,7 +74,7 @@ function compilePredicate(entry: unknown): CompiledPredicate {
 }
 
 /**
- * Compiles and evaluates the CEL request-routing predicates from photon.config.
+ * Compiles and evaluates the CEL request-routing predicates from aws.config.
  *
  * Runtime errors and bodies that are not JSON objects count as no match. An
  * entry that cannot be compiled is different: it taints the whole config,
@@ -88,7 +88,7 @@ export class PredicateEvaluator {
    * `predicates` key compiles to no predicates, so every request passes
    * through.
    *
-   * @throws PhotonConfigUnevaluable `predicates` is present but not an array,
+   * @throws ElastiCacheIntegrationsConfigUnevaluable `predicates` is present but not an array,
    *   an entry is not an object, has no string `expr`, or has an expression
    *   this client cannot compile. Caching by the entries that happened to
    *   compile would route a different set of requests than the proxy resolved.
@@ -99,7 +99,7 @@ export class PredicateEvaluator {
     }
     const entries = rawConfig.predicates;
     if (!Array.isArray(entries)) {
-      throw new PhotonConfigUnevaluable(
+      throw new ElastiCacheIntegrationsConfigUnevaluable(
         `Config 'predicates' must be a list, got ${entries === null ? "null" : typeof entries}`,
       );
     }
@@ -107,7 +107,7 @@ export class PredicateEvaluator {
   }
 
   /** Return true as soon as one compiled predicate matches the request. */
-  shouldRouteToPhoton(request: PhotonRequest): boolean {
+  shouldRouteToCache(request: ElastiCacheIntegrationsRequest): boolean {
     if (this.predicates.length === 0) return false;
     const body = parseBody(request.body);
     if (body === undefined) return false;

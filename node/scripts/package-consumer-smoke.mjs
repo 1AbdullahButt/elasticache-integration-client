@@ -12,26 +12,26 @@ if (!packageSpec || !expectedName || !expectedVersion) {
 }
 
 const checks = [
-  'typeof photon.client === "function"',
-  `photon.version === ${JSON.stringify(expectedVersion)}`,
-  'typeof photon.PhotonError === "function"',
-  'typeof photon.PhotonConfigError === "function"',
-  'typeof photon.PhotonCacheUnavailable === "function"',
-  '!("PhotonHandle" in photon)',
+  'typeof elastiCacheIntegrations.client === "function"',
+  `elastiCacheIntegrations.version === ${JSON.stringify(expectedVersion)}`,
+  'typeof elastiCacheIntegrations.ElastiCacheIntegrationsError === "function"',
+  'typeof elastiCacheIntegrations.ElastiCacheIntegrationsConfigError === "function"',
+  'typeof elastiCacheIntegrations.ElastiCacheIntegrationsCacheUnavailable === "function"',
+  '!("ElastiCacheIntegrationsHandle" in elastiCacheIntegrations)',
 ].join(" && ");
-const smokeRoot = mkdtempSync(join(tmpdir(), "photon-nodejs-smoke-"));
+const smokeRoot = mkdtempSync(join(tmpdir(), "elasticache-integrations-nodejs-smoke-"));
 
 try {
   for (const [name, type, source] of [
     [
       "esm-consumer",
       "module",
-      `import * as photon from ${JSON.stringify(expectedName)};\nif (!(${checks})) process.exit(1);\n`,
+      `import * as elastiCacheIntegrations from ${JSON.stringify(expectedName)};\nif (!(${checks})) process.exit(1);\n`,
     ],
     [
       "cjs-consumer",
       "commonjs",
-      `const photon = require(${JSON.stringify(expectedName)});\nif (!(${checks})) process.exit(1);\n`,
+      `const elastiCacheIntegrations = require(${JSON.stringify(expectedName)});\nif (!(${checks})) process.exit(1);\n`,
     ],
   ]) {
     const consumer = join(smokeRoot, name);

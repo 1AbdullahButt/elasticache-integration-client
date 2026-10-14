@@ -1,14 +1,14 @@
 /**
  * Refresher: a generic periodic-callback runner used to drive background tasks.
  *
- * The refresher knows nothing about Photon, sessions, or config. It invokes a
+ * The refresher knows nothing about ElastiCacheIntegrations, sessions, or config. It invokes a
  * no-argument callback on a jittered interval until stopped. Callback failures
  * may use a separate retry delay. The timer is
  * unref'd so a running refresher never keeps the Node.js process alive, and a
  * failing callback is swallowed so it can neither crash the host process nor
  * stop future cycles.
  */
-import { PhotonError } from "./errors.js";
+import { ElastiCacheIntegrationsError } from "./errors.js";
 
 /** Default jitter fraction: each delay lands within +/-20% of the interval. */
 const DEFAULT_JITTER = 0.2;
@@ -51,12 +51,14 @@ export class Refresher {
   ) {
     this.jitter = options.jitter ?? DEFAULT_JITTER;
     if (!Number.isFinite(this.jitter) || this.jitter < 0 || this.jitter >= 1) {
-      throw new PhotonError(`Invalid jitter: must be in [0, 1), got ${this.jitter}`);
+      throw new ElastiCacheIntegrationsError(
+        `Invalid jitter: must be in [0, 1), got ${this.jitter}`,
+      );
     }
     this.validateInterval(intervalSeconds);
     this.intervalSeconds = intervalSeconds;
     this.random = options.random ?? Math.random;
-    this.name = options.name ?? "photon-refresher";
+    this.name = options.name ?? "elastiCacheIntegrations-refresher";
     this.failureDelayMs = options.failureDelayMs;
   }
 
@@ -73,12 +75,14 @@ export class Refresher {
 
   private validateInterval(intervalSeconds: number): void {
     if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
-      throw new PhotonError(`Invalid refresh interval: must be positive, got ${intervalSeconds}`);
+      throw new ElastiCacheIntegrationsError(
+        `Invalid refresh interval: must be positive, got ${intervalSeconds}`,
+      );
     }
     // Check the longest delay jitter can produce, not the interval itself.
     const maxDelayMs = intervalSeconds * 1000 * (1 + this.jitter);
     if (maxDelayMs > MAX_TIMEOUT_MS) {
-      throw new PhotonError(
+      throw new ElastiCacheIntegrationsError(
         `Invalid refresh interval: ${intervalSeconds}s exceeds the maximum schedulable delay ` +
           `of ${MAX_TIMEOUT_MS}ms`,
       );
@@ -123,7 +127,7 @@ export class Refresher {
       this.consecutiveFailures = 0;
     } catch (error) {
       const message =
-        `Photon background task ${this.name} failed (${++this.consecutiveFailures} in a row); ` +
+        `ElastiCacheIntegrations background task ${this.name} failed (${++this.consecutiveFailures} in a row); ` +
         "retrying. The cache keeps serving meanwhile.";
       if (this.consecutiveFailures === 1 || this.consecutiveFailures % 100 === 0) {
         console.warn(message, error);
