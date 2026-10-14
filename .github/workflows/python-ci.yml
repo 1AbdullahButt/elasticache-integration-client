@@ -149,13 +149,13 @@ jobs:
           import tarfile
           import zipfile
 
-          catalog = "photon/idempotent-operations.json"
-          photon_modules = [
-              "photon/__init__.py",
-              "photon/client.py",
-              "photon/session.py",
-              "photon/connection.py",
-              "photon/idempotency.py",
+          catalog = "elasticache_integrations/idempotent-operations.json"
+          cache_modules = [
+              "elasticache_integrations/__init__.py",
+              "elasticache_integrations/client.py",
+              "elasticache_integrations/session.py",
+              "elasticache_integrations/connection.py",
+              "elasticache_integrations/idempotency.py",
           ]
           toolkit_modules = [
               "developer_toolkit_elasticache/__init__.py",
@@ -176,7 +176,7 @@ jobs:
           (sdist,) = glob.glob("dist/*.tar.gz")
           (wheel,) = glob.glob("dist/*.whl")
           with tarfile.open(sdist) as archive:
-              # Members start with "photon-<version>/"; drop that prefix.
+              # Members start with "elasticache-integrations-<version>/"; drop that prefix.
               sdist_names = [n.split("/", 1)[1] for n in archive.getnames() if "/" in n]
           with zipfile.ZipFile(wheel) as archive:
               wheel_names = archive.namelist()
@@ -185,10 +185,10 @@ jobs:
           required_by_archive = {
               "sdist": [
                   catalog,
-                  *photon_modules,
+                  *cache_modules,
                   *sdist_toolkit_modules,
               ],
-              "wheel": [catalog, *photon_modules, *toolkit_modules],
+              "wheel": [catalog, *cache_modules, *toolkit_modules],
           }
           for label, names in (("sdist", sdist_names), ("wheel", wheel_names)):
               for required in required_by_archive[label]:

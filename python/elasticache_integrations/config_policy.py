@@ -1,10 +1,10 @@
-"""Config-staleness settings for a :class:`~photon.session.PhotonSession`."""
+"""Config-staleness settings for a :class:`~elasticache_integrations.session.ElastiCacheIntegrationsSession`."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from photon.exceptions import PhotonConfigError
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsConfigError
 
 DEFAULT_STALENESS_DURATION = 3600
 
@@ -22,4 +22,6 @@ class ConfigPolicy:
 
     def __post_init__(self) -> None:
         if type(self.staleness_duration) is not int or self.staleness_duration <= 0:
-            raise PhotonConfigError("staleness_duration must be a positive whole number of seconds")
+            raise ElastiCacheIntegrationsConfigError(
+                "staleness_duration must be a positive whole number of seconds"
+            )

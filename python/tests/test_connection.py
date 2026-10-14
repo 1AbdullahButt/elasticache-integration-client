@@ -1,8 +1,8 @@
-"""Unit tests for photon.connection, organized by the connector contract:
+"""Unit tests for elasticache_integrations.connection, organized by the connector contract:
 
-1. Establishment — connect() yields a usable connection or a PhotonConnectionError
+1. Establishment — connect() yields a usable connection or a ElastiCacheIntegrationsConnectionError
 2. Authentication — the AUTH exchange
-3. Send path — callers on any thread get their own reply, or a Photon exception
+3. Send path — callers on any thread get their own reply, or a ElastiCacheIntegrations exception
 4. Read path — bytes become correctly framed, FIFO-routed replies
 5. Close — idempotent, prompt, and nothing the connector owns outlives it
 
@@ -21,28 +21,32 @@ from unittest import mock
 
 import pytest
 
-from photon.connection import PhotonConnector, _PendingRequests, _SocketReader
-from photon.exceptions import (
-    PhotonAuthError,
-    PhotonConnectionLost,
-    PhotonConnectionError,
-    PhotonError,
-    PhotonProtocolError,
-    PhotonTimeoutError,
+from elasticache_integrations.connection import (
+    ElastiCacheIntegrationsConnector,
+    _PendingRequests,
+    _SocketReader,
 )
-from photon.protocol import PUSH_KIND_RESPONSE
-from photon.resp import RespError, RespPush, RespValue
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsAuthError,
+    ElastiCacheIntegrationsConnectionLost,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsError,
+    ElastiCacheIntegrationsProtocolError,
+    ElastiCacheIntegrationsTimeoutError,
+)
+from elasticache_integrations.protocol import PUSH_KIND_RESPONSE
+from elasticache_integrations.resp import RespError, RespPush, RespValue
 from tests.mock import MockCache, Reply
 
 
-class TestPhotonConnector:
+class TestElastiCacheIntegrationsConnector:
     """The connector contract (live MockCache, plaintext and TLS) plus internals."""
 
     # Defaults for tests that never start a cache / connect; helpers assign
     # instance attributes that shadow these. pytest creates a fresh instance
     # per test, so nothing is shared between tests.
     cache: MockCache | None = None
-    conn: PhotonConnector | None = None
+    conn: ElastiCacheIntegrationsConnector | None = None
 
     def teardown_method(self):
         # ALWAYS runs (pass or fail): a failing assertion cannot leak the cache
@@ -64,18 +68,20 @@ class TestPhotonConnector:
         """Create + connect ``self.conn`` (default cache, and plaintext unless ``tls=True``)."""
         if self.cache is None:
             self.start_cache()
-        self.conn = PhotonConnector(self.cache.host, self.cache.port, tls=tls, **kwargs)
+        self.conn = ElastiCacheIntegrationsConnector(
+            self.cache.host, self.cache.port, tls=tls, **kwargs
+        )
         self.conn.connect()
 
     def connect_and_handshake(self, **kwargs) -> None:
-        """connect() plus the photon.config handshake — ready to send requests."""
+        """connect() plus the aws.config handshake — ready to send requests."""
         self.connect(**kwargs)
-        self.conn.execute("photon.config", b"{}", timeout=self.conn.config_timeout)
+        self.conn.execute("aws.config", b"{}", timeout=self.conn.config_timeout)
 
     def send_request(self, body: bytes = b"body", *, timeout: float | None = None) -> RespValue:
-        """Send a canonical photon.request ([method, url, headers, body, metadata]) with the given."""
+        """Send a canonical aws.request ([method, url, headers, body, metadata]) with the given."""
         args = [b"POST", b"https://x/", b"", body, b"service=s&op=o"]
-        return self.conn.execute("photon.request", *args, timeout=timeout)
+        return self.conn.execute("aws.request", *args, timeout=timeout)
 
     def wait_until(self, condition, timeout: float = 2.0) -> bool:
         """Poll ``condition`` until it is true, up to ``timeout``. Returns its final value."""
@@ -98,37 +104,37 @@ class TestPhotonConnector:
     # ======================================================================== #
 
     def test_request_timeout_defaults_to_five_seconds(self):
-        self.conn = PhotonConnector("127.0.0.1", 1, tls=False)
+        self.conn = ElastiCacheIntegrationsConnector("127.0.0.1", 1, tls=False)
 
         assert self.conn._request_timeout == 5.0
 
     def test_connect_and_handshake(self):
-        """connect() yields a working connection: the photon.config handshake round-trips
+        """connect() yields a working connection: the aws.config handshake round-trips
         the mock's resolved config (as a raw JSON bulk string — parsing it is
         protocol.py's contract)."""
         self.connect()
-        raw = self.conn.execute("photon.config", b'{"k":"v"}')
+        raw = self.conn.execute("aws.config", b'{"k":"v"}')
         cfg = json.loads(raw)
         assert cfg["version"] == "1.0"
         assert cfg["refresh_interval"] == 60
 
     def test_no_arg_config_round_trips_resp3_null(self):
-        """A no-argument photon.config ('overrides unchanged') gets back the literal RESP3
+        """A no-argument aws.config ('overrides unchanged') gets back the literal RESP3
         null byte sequence (`_\\r\\n`) from a real server over a real socket, decoded to None —
         proving the wire-level path end-to-end, not just resp.py's decoder in isolation."""
         self.connect()
-        reply = self.conn.execute("photon.config")
+        reply = self.conn.execute("aws.config")
         assert reply is None
 
     def test_connect_to_nothing_raises(self):
-        """Connecting to a port with nothing listening raises PhotonConnectionError."""
+        """Connecting to a port with nothing listening raises ElastiCacheIntegrationsConnectionError."""
         # Reserve a port then free it so nothing is listening -> TCP connect fails.
         probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
         probe.close()
-        conn = PhotonConnector("127.0.0.1", port, connect_timeout=1.0)
-        with pytest.raises(PhotonConnectionError) as exc_info:
+        conn = ElastiCacheIntegrationsConnector("127.0.0.1", port, connect_timeout=1.0)
+        with pytest.raises(ElastiCacheIntegrationsConnectionError) as exc_info:
             conn.connect()
         assert isinstance(exc_info.value.__cause__, ConnectionRefusedError)
 
@@ -144,8 +150,10 @@ class TestPhotonConnector:
         """With the default CA store (which does not trust the mock's self-signed cert),
         the handshake must fail — never connect insecurely."""
         self.start_cache(tls=True)
-        self.conn = PhotonConnector(self.cache.host, self.cache.port)  # tls=True, no ca_certs
-        with pytest.raises(PhotonConnectionError, match="TLS handshake failed"):
+        self.conn = ElastiCacheIntegrationsConnector(
+            self.cache.host, self.cache.port
+        )  # tls=True, no ca_certs
+        with pytest.raises(ElastiCacheIntegrationsConnectionError, match="TLS handshake failed"):
             self.conn.connect()
 
     def test_tls_verify_false_connects_untrusted(self):
@@ -156,18 +164,18 @@ class TestPhotonConnector:
         assert self.send_request()[0] == 200
 
     def test_send_before_connect_raises(self):
-        """Sending before connect() raises PhotonError (no connection yet — distinct from
-        PhotonConnectionLost, which means a connection existed and died)."""
+        """Sending before connect() raises ElastiCacheIntegrationsError (no connection yet — distinct from
+        ElastiCacheIntegrationsConnectionLost, which means a connection existed and died)."""
         self.start_cache()
-        conn = PhotonConnector(self.cache.host, self.cache.port, tls=False)
-        with pytest.raises(PhotonError, match="used before connect"):
-            conn.execute("photon.config", b"{}")
+        conn = ElastiCacheIntegrationsConnector(self.cache.host, self.cache.port, tls=False)
+        with pytest.raises(ElastiCacheIntegrationsError, match="used before connect"):
+            conn.execute("aws.config", b"{}")
 
     def test_close_during_connect_aborts_cleanly(self):
         """close() while connect() is still opening the connection: connect() must raise
-        PhotonConnectionError and the connector must end fully closed — no half-open
+        ElastiCacheIntegrationsConnectionError and the connector must end fully closed — no half-open
         connection, no leaked I/O loop thread."""
-        conn = PhotonConnector("h", 1, tls=False)
+        conn = ElastiCacheIntegrationsConnector("h", 1, tls=False)
         open_entered = threading.Event()
 
         async def blocked_open(*args, **kwargs):
@@ -186,7 +194,9 @@ class TestPhotonConnector:
             except BaseException as exc:  # noqa: BLE001 — the assertion below names the type
                 outcome.append(exc)
 
-        with mock.patch("photon.connection.asyncio.open_connection", blocked_open):
+        with mock.patch(
+            "elasticache_integrations.connection.asyncio.open_connection", blocked_open
+        ):
             t = threading.Thread(target=run_connect)
             t.start()
             assert open_entered.wait(2)
@@ -195,23 +205,25 @@ class TestPhotonConnector:
 
         assert not t.is_alive()
         assert len(outcome) == 1  # connect() raised exactly once
-        assert isinstance(outcome[0], PhotonConnectionError), outcome[0]
+        assert isinstance(outcome[0], ElastiCacheIntegrationsConnectionError), outcome[0]
         assert conn._writer is None
-        assert not any(th.name == "photon-io-thread" for th in threading.enumerate())
+        assert not any(
+            th.name == "elasticache-integrations-io-thread" for th in threading.enumerate()
+        )
 
     def test_connect_install_refused_after_close(self):
         """The install-check second line of defense: if close() lands after the connection
         opens but before install, the fresh connection is aborted, never installed.
         Internals: _establish_connection driven directly with _closed pre-set."""
-        conn = PhotonConnector("h", 1, tls=False)
+        conn = ElastiCacheIntegrationsConnector("h", 1, tls=False)
         conn._closed = True
         writer = mock.Mock()
 
         async def fake_open(*args, **kwargs):
             return (mock.Mock(), writer)
 
-        with mock.patch("photon.connection.asyncio.open_connection", fake_open):
-            with pytest.raises(PhotonConnectionError):
+        with mock.patch("elasticache_integrations.connection.asyncio.open_connection", fake_open):
+            with pytest.raises(ElastiCacheIntegrationsConnectionError):
                 asyncio.run(conn._establish_connection())
         writer.transport.abort.assert_called_once()
         assert conn._writer is None
@@ -222,14 +234,16 @@ class TestPhotonConnector:
 
     def test_hello_silence_times_out_and_kills_connection(self):
         """A server that goes silent on HELLO trips the request timeout: handshake() raises
-        PhotonConnectionError and the connection is closed. The token never appears in
+        ElastiCacheIntegrationsConnectionError and the connection is closed. The token never appears in
         the message."""
         self.start_cache(failure="hang", failure_command="hello")
         self.connect(
             request_timeout=0.3,
             auth_provider=lambda: ("test-user", "test-token"),
         )
-        with pytest.raises(PhotonConnectionError, match="HELLO 3 timed out") as excinfo:
+        with pytest.raises(
+            ElastiCacheIntegrationsConnectionError, match="HELLO 3 timed out"
+        ) as excinfo:
             self.conn.handshake()
         assert "test-token" not in str(excinfo.value)
         assert self.conn._closed
@@ -237,15 +251,15 @@ class TestPhotonConnector:
     def test_hello_accepted(self):
         """A map reporting proto 3 confirms the switch.
         Internals: _verify_hello_reply is pure reply validation, tested directly."""
-        conn = PhotonConnector("host", 6379, tls=False)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
         conn._verify_hello_reply({b"server": b"valkey", b"proto": 3})  # must not raise
         assert not conn._closed
 
     @pytest.mark.parametrize(
         "code,error_type",
         [
-            ("NOPROTO", PhotonConnectionError),
-            ("invalid-iam-credentials", PhotonAuthError),
+            ("NOPROTO", ElastiCacheIntegrationsConnectionError),
+            ("invalid-iam-credentials", ElastiCacheIntegrationsAuthError),
         ],
     )
     def test_hello_rejected_kills_connection(self, code, error_type):
@@ -254,7 +268,7 @@ class TestPhotonConnector:
         RESP2 makes deferred responses silently unavailable, and an unauthenticated connection
         has no valid next use — and the code is surfaced.
         Internals: _verify_hello_reply tested directly."""
-        conn = PhotonConnector("host", 6379, tls=False)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
         with pytest.raises(error_type) as excinfo:
             conn._verify_hello_reply(RespError(code, "nope"))
         assert code in str(excinfo.value)
@@ -264,12 +278,12 @@ class TestPhotonConnector:
         """A rejected cached token is replaced before the bounded connect retry."""
         provider = mock.Mock(return_value=("iam-user", "cached-token"))
         provider.refresh_auth = mock.Mock(return_value=("iam-user", "replacement-token"))
-        conn = PhotonConnector("host", 6379, tls=False, auth_provider=provider)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False, auth_provider=provider)
         conn.execute = mock.Mock(
             return_value=RespError("invalid-iam-credentials", "credentials rejected")
         )
 
-        with pytest.raises(PhotonAuthError, match="invalid-iam-credentials"):
+        with pytest.raises(ElastiCacheIntegrationsAuthError, match="invalid-iam-credentials"):
             conn.handshake()
 
         provider.refresh_auth.assert_called_once()
@@ -277,13 +291,13 @@ class TestPhotonConnector:
     def test_non_auth_hello_rejection_does_not_refresh_managed_auth(self):
         provider = mock.Mock(return_value=("iam-user", "cached-token"))
         provider.refresh_auth = mock.Mock(return_value=("iam-user", "replacement-token"))
-        conn = PhotonConnector("host", 6379, tls=False, auth_provider=provider)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False, auth_provider=provider)
         conn.execute = mock.Mock(return_value=RespError("NOPROTO", "unsupported protocol"))
 
-        with pytest.raises(PhotonConnectionError, match="NOPROTO") as excinfo:
+        with pytest.raises(ElastiCacheIntegrationsConnectionError, match="NOPROTO") as excinfo:
             conn.handshake()
 
-        assert not isinstance(excinfo.value, PhotonAuthError)
+        assert not isinstance(excinfo.value, ElastiCacheIntegrationsAuthError)
         provider.refresh_auth.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -298,8 +312,8 @@ class TestPhotonConnector:
     def test_hello_unconfirmed_switch_kills_connection(self, reply):
         """Anything that does not positively confirm proto 3 closes the connection: continuing
         would leave head-of-line blocking in place with nothing reporting it."""
-        conn = PhotonConnector("host", 6379, tls=False)
-        with pytest.raises(PhotonConnectionError):
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
+        with pytest.raises(ElastiCacheIntegrationsConnectionError):
             conn._verify_hello_reply(reply)
         assert conn._closed
 
@@ -308,18 +322,18 @@ class TestPhotonConnector:
         connection stays open and the proxy keeps serving on its last valid token. This is the
         opposite of the HELLO bring-up, where a rejection closes. Internals: _verify_auth_reply
         tested directly."""
-        conn = PhotonConnector("host", 6379, tls=False)
-        with pytest.raises(PhotonAuthError):
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
+        with pytest.raises(ElastiCacheIntegrationsAuthError):
             conn._verify_auth_reply(RespError("WRONGPASS", "bad token"))
         assert not conn._closed
 
     def test_reauth_rejection_force_refreshes_managed_auth(self):
         provider = mock.Mock(return_value=("iam-user", "cached-token"))
         provider.refresh_auth = mock.Mock(return_value=("iam-user", "replacement-token"))
-        conn = PhotonConnector("host", 6379, tls=False, auth_provider=provider)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False, auth_provider=provider)
         conn.execute = mock.Mock(return_value=RespError("WRONGPASS", "bad token"))
 
-        with pytest.raises(PhotonAuthError, match="WRONGPASS"):
+        with pytest.raises(ElastiCacheIntegrationsAuthError, match="WRONGPASS"):
             conn.authenticate()
 
         provider.refresh_auth.assert_called_once()
@@ -327,10 +341,10 @@ class TestPhotonConnector:
     def test_reauth_unexpected_reply_does_not_refresh_closed_connection(self):
         provider = mock.Mock(return_value=("iam-user", "cached-token"))
         provider.refresh_auth = mock.Mock(return_value=("iam-user", "replacement-token"))
-        conn = PhotonConnector("host", 6379, tls=False, auth_provider=provider)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False, auth_provider=provider)
         conn.execute = mock.Mock(return_value=b"response from another request")
 
-        with pytest.raises(PhotonAuthError, match="unexpected reply"):
+        with pytest.raises(ElastiCacheIntegrationsAuthError, match="unexpected reply"):
             conn.authenticate()
 
         assert not conn.is_alive
@@ -339,11 +353,11 @@ class TestPhotonConnector:
     def test_failed_forced_refresh_logs_and_preserves_rejection(self, caplog):
         provider = mock.Mock(return_value=("iam-user", "cached-token"))
         provider.refresh_auth = mock.Mock(side_effect=RuntimeError("signing failed"))
-        conn = PhotonConnector("host", 6379, tls=False, auth_provider=provider)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False, auth_provider=provider)
         conn.execute = mock.Mock(return_value=RespError("WRONGPASS", "bad token"))
 
-        with caplog.at_level("WARNING", logger="photon.connection"):
-            with pytest.raises(PhotonAuthError, match="WRONGPASS"):
+        with caplog.at_level("WARNING", logger="elasticache_integrations.connection"):
+            with pytest.raises(ElastiCacheIntegrationsAuthError, match="WRONGPASS"):
                 conn.authenticate()
 
         assert "Failed to force-refresh IAM authentication" in caplog.text
@@ -361,8 +375,8 @@ class TestPhotonConnector:
     def test_reauth_unexpected_reply_closes_the_connection(self, reply):
         """Any non-OK reply other than an error means the FIFO is out of sync, so the connection
         closes and the reply is kept out of the message (it may be another request's body)."""
-        conn = PhotonConnector("host", 6379, tls=False)
-        with pytest.raises(PhotonAuthError) as excinfo:
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
+        with pytest.raises(ElastiCacheIntegrationsAuthError) as excinfo:
             conn._verify_auth_reply(reply)
         assert conn._closed
         assert type(reply).__name__ in str(excinfo.value)
@@ -374,7 +388,7 @@ class TestPhotonConnector:
         self.start_cache()
         self.connect(auth_provider=lambda: ("test-user", "test-token"))
         self.conn.handshake()
-        assert self.cache.photon_command_log == ["hello"]
+        assert self.cache.cache_command_log == ["hello"]
         assert self.cache.received_commands[0] == [
             b"HELLO",
             b"3",
@@ -388,8 +402,8 @@ class TestPhotonConnector:
     # ======================================================================== #
 
     def test_request_round_trip(self):
-        """A photon.request round-trips: the caller gets the cache's [status, headers, body]
-        array intact (turning it into a PhotonResponse is protocol.py's contract)."""
+        """A aws.request round-trips: the caller gets the cache's [status, headers, body]
+        array intact (turning it into a ElastiCacheIntegrationsResponse is protocol.py's contract)."""
         self.start_cache(
             response_status=200,
             response_headers="content-type:application/json",
@@ -451,20 +465,20 @@ class TestPhotonConnector:
         FIFO-matched to the WRONG caller."""
         self.start_cache(failure="hang")
         self.connect_and_handshake(request_timeout=0.3)
-        with pytest.raises(PhotonTimeoutError):
+        with pytest.raises(ElastiCacheIntegrationsTimeoutError):
             self.send_request()
         assert self.conn._closed is True
 
     def test_send_on_closed_connection_fails_fast(self):
-        """Once closed, a new send fails PhotonConnectionLost immediately — it must not sit out
+        """Once closed, a new send fails ElastiCacheIntegrationsConnectionLost immediately — it must not sit out
         the full request timeout."""
         self.start_cache(failure="drop")
         # Generous request_timeout so a fast failure is distinguishable from a timeout wait.
         self.connect_and_handshake(request_timeout=5.0)
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()  # server drops -> closed
         start = time.monotonic()
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()
         assert time.monotonic() - start < 1.0  # closed-check fired, not the 5s timeout
 
@@ -474,7 +488,7 @@ class TestPhotonConnector:
         by design — a send only copies bytes into the transport buffer.)"""
         self.connect_and_handshake(request_timeout=0.2)
         self.conn._io_loop_thread.call(time.sleep, 1)  # wedge the loop
-        with pytest.raises(PhotonTimeoutError):
+        with pytest.raises(ElastiCacheIntegrationsTimeoutError):
             self.send_request()
 
     @pytest.mark.parametrize(
@@ -489,16 +503,16 @@ class TestPhotonConnector:
     def test_write_failure_kills_connection(self, leak):
         """A write that fails — including the wrong-typed exceptions a closing transport can
         leak on 3.12 / early 3.13 (CPython gh-136234) — fails the caller with
-        PhotonConnectionLost and kills the connection; the next send fails fast."""
+        ElastiCacheIntegrationsConnectionLost and kills the connection; the next send fails fast."""
         self.connect_and_handshake(request_timeout=5.0)
         writer = self.wrap_writer()
         writer.write = mock.Mock(side_effect=leak)
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()
         writer.write.assert_called_once()
         assert self.conn._closed is True
         start = time.monotonic()
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()  # closed-check fires, not the 5s timeout
         assert time.monotonic() - start < 1.0
 
@@ -524,7 +538,7 @@ class TestPhotonConnector:
         self.connect_and_handshake()
         value = self.send_request()  # reply arrives despite the FIN right behind it
         assert value[0] == 200
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()  # death detected on the next use
 
     def test_quiet_connection_stays_alive(self):
@@ -550,18 +564,18 @@ class TestPhotonConnector:
 
     def test_garbage_reply_fails_caller_as_connection_lost(self):
         """A reply that cannot be decoded kills the connection: the waiting caller fails
-        with PhotonConnectionLost carrying the PhotonProtocolError as its cause. The
+        with ElastiCacheIntegrationsConnectionLost carrying the ElastiCacheIntegrationsProtocolError as its cause. The
         request was sent and never answered, so it must surface as a connection loss
         (indeterminate), never as a response-level error."""
         self.start_cache(response=Reply(frame=b"X123\r\n"))
         self.connect_and_handshake()
-        with pytest.raises(PhotonConnectionLost) as exc_info:
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost) as exc_info:
             self.send_request()
-        assert isinstance(exc_info.value.__cause__, PhotonProtocolError)
+        assert isinstance(exc_info.value.__cause__, ElastiCacheIntegrationsProtocolError)
         assert self.conn._closed is True
 
     def test_reader_eof_raises_connection_lost(self):
-        """Clean EOF mid-frame surfaces as PhotonConnectionLost, not a decode error.
+        """Clean EOF mid-frame surfaces as ElastiCacheIntegrationsConnectionLost, not a decode error.
         Internals: _SocketReader on an in-memory stream."""
 
         async def scenario() -> None:
@@ -571,7 +585,7 @@ class TestPhotonConnector:
             stream.feed_eof()
             await reader.read_frame()
 
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             asyncio.run(scenario())
 
     def test_reader_rejects_a_frame_over_the_cap(self):
@@ -589,7 +603,7 @@ class TestPhotonConnector:
             stream.feed_eof()
             await reader.read_frame()
 
-        with pytest.raises(PhotonProtocolError, match="maximum response size"):
+        with pytest.raises(ElastiCacheIntegrationsProtocolError, match="maximum response size"):
             asyncio.run(scenario())
 
     def test_reader_accepts_a_frame_exactly_at_the_cap(self):
@@ -605,7 +619,7 @@ class TestPhotonConnector:
             return await reader.read_frame()
 
         assert asyncio.run(scenario(len(frame))) == b"hello"
-        with pytest.raises(PhotonProtocolError, match="maximum response size"):
+        with pytest.raises(ElastiCacheIntegrationsProtocolError, match="maximum response size"):
             asyncio.run(scenario(len(frame) - 1))
 
     def test_reader_caps_each_frame_not_the_connection(self):
@@ -623,13 +637,13 @@ class TestPhotonConnector:
 
     def test_oversize_reply_fails_caller_as_connection_lost(self):
         """An over-cap reply kills the connection the same way any undecodable one does: the
-        caller sees PhotonConnectionLost carrying the PhotonProtocolError as its cause. The
+        caller sees ElastiCacheIntegrationsConnectionLost carrying the ElastiCacheIntegrationsProtocolError as its cause. The
         request was sent and never answered, so it is indeterminate, not a response error."""
         self.start_cache(response=Reply.ok(body=b"x" * 4096))
         self.connect_and_handshake(max_response_size=512)  # roomy for HELLO/config, not the body
-        with pytest.raises(PhotonConnectionLost) as exc_info:
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost) as exc_info:
             self.send_request()
-        assert isinstance(exc_info.value.__cause__, PhotonProtocolError)
+        assert isinstance(exc_info.value.__cause__, ElastiCacheIntegrationsProtocolError)
         assert "maximum response size" in str(exc_info.value.__cause__)
         assert self.conn._closed is True
 
@@ -651,12 +665,12 @@ class TestPhotonConnector:
         assert f3.result(timeout=1) == b"v3"
 
     def test_max_pending_rejects_when_full(self):
-        """At the cap, registering fails fast with PhotonError and the queue is unchanged;
+        """At the cap, registering fails fast with ElastiCacheIntegrationsError and the queue is unchanged;
         resolving a request frees a slot. Internals: _PendingRequests."""
         pending = _PendingRequests(max_pending=2)
         pending.register_new_request(Future())
         pending.register_new_request(Future())
-        with pytest.raises(PhotonError):
+        with pytest.raises(ElastiCacheIntegrationsError):
             pending.register_new_request(Future())
         pending.resolve_oldest_request(b"v1")  # frees one slot
         pending.register_new_request(Future())  # fits again
@@ -666,7 +680,7 @@ class TestPhotonConnector:
         pending = _PendingRequests(max_pending=1)
         pending.register_new_request(Future())
         pending.move_head_to_async_responses("1")  # out of the FIFO, still in flight
-        with pytest.raises(PhotonError, match="too many in-flight requests"):
+        with pytest.raises(ElastiCacheIntegrationsError, match="too many in-flight requests"):
             pending.register_new_request(Future())
 
     def test_a_deferred_request_lets_the_next_reply_through(self):
@@ -701,7 +715,7 @@ class TestPhotonConnector:
         """A request id reply with nothing pending cannot be matched to a caller, so the stream
         can no longer be trusted. Internals: _PendingRequests."""
         pending = _PendingRequests()
-        with pytest.raises(PhotonProtocolError, match="no pending request"):
+        with pytest.raises(ElastiCacheIntegrationsProtocolError, match="no pending request"):
             pending.move_head_to_async_responses("1")
 
     def test_duplicate_request_id_is_a_protocol_error(self):
@@ -711,7 +725,7 @@ class TestPhotonConnector:
         pending.register_new_request(Future())
         pending.move_head_to_async_responses("1")
         pending.register_new_request(Future())  # else the empty-FIFO check fires first
-        with pytest.raises(PhotonProtocolError, match="duplicate request id"):
+        with pytest.raises(ElastiCacheIntegrationsProtocolError, match="duplicate request id"):
             pending.move_head_to_async_responses("1")
 
     def test_fail_if_async_fails_a_deferred_future(self):
@@ -721,8 +735,8 @@ class TestPhotonConnector:
         deferred = Future()
         pending.register_new_request(deferred)
         pending.move_head_to_async_responses("1")
-        assert pending.fail_if_async(deferred, PhotonTimeoutError("gave up"))
-        with pytest.raises(PhotonTimeoutError):
+        assert pending.fail_if_async(deferred, ElastiCacheIntegrationsTimeoutError("gave up"))
+        with pytest.raises(ElastiCacheIntegrationsTimeoutError):
             deferred.result(timeout=1)
         assert not pending.resolve_async("1", b"late")
 
@@ -735,7 +749,7 @@ class TestPhotonConnector:
         pending.register_new_request(deferred)
         pending.move_head_to_async_responses("1")
         assert pending.resolve_async("1", b"just in time")  # the reader wins
-        assert pending.fail_if_async(deferred, PhotonTimeoutError("too late"))
+        assert pending.fail_if_async(deferred, ElastiCacheIntegrationsTimeoutError("too late"))
         assert deferred.result(timeout=1) == b"just in time"
 
     def test_fail_if_async_leaves_a_fifo_future_alone(self):
@@ -745,7 +759,7 @@ class TestPhotonConnector:
         pending = _PendingRequests()
         fifo = Future()
         pending.register_new_request(fifo)
-        assert not pending.fail_if_async(fifo, PhotonTimeoutError("gave up"))
+        assert not pending.fail_if_async(fifo, ElastiCacheIntegrationsTimeoutError("gave up"))
         assert not fifo.done()
 
     def test_fail_all_fails_async_futures_too(self):
@@ -757,15 +771,15 @@ class TestPhotonConnector:
         pending.move_head_to_async_responses("1")
         fifo = Future()
         pending.register_new_request(fifo)
-        pending.fail_all(PhotonConnectionLost("gone"))
+        pending.fail_all(ElastiCacheIntegrationsConnectionLost("gone"))
         for future in (deferred, fifo):
-            with pytest.raises(PhotonConnectionLost):
+            with pytest.raises(ElastiCacheIntegrationsConnectionLost):
                 future.result(timeout=1)
         assert pending.resolve_async("1", b"late") is False  # map was cleared
 
     def test_max_pending_propagates_from_connector(self):
         """The connector passes its max_pending through to the pending queue."""
-        conn = PhotonConnector("h", 1, tls=False, max_pending=7)
+        conn = ElastiCacheIntegrationsConnector("h", 1, tls=False, max_pending=7)
         assert conn._pending._max_pending == 7
 
     # ======================================================================== #
@@ -775,7 +789,7 @@ class TestPhotonConnector:
     def test_reader_routes_an_id_reply_to_the_async_map(self):
         """A simple string other than OK is a request id: the reader moves the oldest future
         out of the FIFO into the async map under that id. Internals: _reader_loop."""
-        conn = PhotonConnector("host", 6379, tls=False)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
         future = Future()
         conn._pending.register_new_request(future)
 
@@ -797,7 +811,7 @@ class TestPhotonConnector:
         """The push for a deferred request resolves its future and removes the id from the
         map, so nothing is left waiting under it. An error travels as a value, like a
         synchronous one. Internals: _handle_push."""
-        conn = PhotonConnector("host", 6379, tls=False)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
         future = Future()
         conn._pending.register_new_request(future)
         conn._pending.move_head_to_async_responses("42")
@@ -812,7 +826,7 @@ class TestPhotonConnector:
         self.start_cache(response_fn=lambda req: replies.pop(0))
         self.connect_and_handshake(request_timeout=0.3)
 
-        with pytest.raises(PhotonTimeoutError, match="async request timed out"):
+        with pytest.raises(ElastiCacheIntegrationsTimeoutError, match="async request timed out"):
             self.send_request()
         assert not self.conn._closed  # the connection survived
 
@@ -824,8 +838,8 @@ class TestPhotonConnector:
     def test_unknown_push_kind_is_a_protocol_error(self):
         """The proxy only sends kinds this client understands, so an unknown kind means the
         stream cannot be trusted. Internals: _handle_push."""
-        conn = PhotonConnector("host", 6379, tls=False)
-        with pytest.raises(PhotonProtocolError, match="unknown push kind"):
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
+        with pytest.raises(ElastiCacheIntegrationsProtocolError, match="unknown push kind"):
             conn._handle_push(RespPush(kind=b"invalidate", items=[b"whatever"]))
 
     def test_malformed_push_kills_connection(self):
@@ -839,7 +853,7 @@ class TestPhotonConnector:
     def test_push_for_unknown_id_is_dropped(self):
         """A push whose id maps to nothing (caller timed out earlier) is logged and dropped;
         the connection stays alive. Internals: _handle_push."""
-        conn = PhotonConnector("host", 6379, tls=False)
+        conn = ElastiCacheIntegrationsConnector("host", 6379, tls=False)
         conn._handle_push(RespPush(kind=PUSH_KIND_RESPONSE, items=[b"7", [200, b"", b""]]))
         assert not conn._closed
 
@@ -858,11 +872,13 @@ class TestPhotonConnector:
         connector owns (loop, thread, connection) dies with its close()."""
         self.start_cache()
         for _ in range(10):
-            conn = PhotonConnector(self.cache.host, self.cache.port, tls=False)
+            conn = ElastiCacheIntegrationsConnector(self.cache.host, self.cache.port, tls=False)
             conn.connect()
-            conn.execute("photon.config", b"{}")
+            conn.execute("aws.config", b"{}")
             conn.close()
-        assert not any(t.name == "photon-io-thread" for t in threading.enumerate())
+        assert not any(
+            t.name == "elasticache-integrations-io-thread" for t in threading.enumerate()
+        )
 
     def test_close_stops_and_forgets_the_io_loop(self):
         """After close(), the I/O loop thread has terminated and all connection state is
@@ -877,16 +893,16 @@ class TestPhotonConnector:
         assert self.conn._writer is None
 
     def test_execute_after_close_raises_connection_lost(self):
-        """execute() on a closed connector reports PhotonConnectionLost, not the misleading
+        """execute() on a closed connector reports ElastiCacheIntegrationsConnectionLost, not the misleading
         "used before connect()" error (close() nulls the loop)."""
         self.connect()
         self.conn.close()
-        with pytest.raises(PhotonConnectionLost):
-            self.conn.execute("photon.request", b"x")
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
+            self.conn.execute("aws.request", b"x")
 
     def test_close_fails_pending_requests(self):
         """close() while a caller is blocked waiting for a reply: the caller gets
-        PhotonConnectionLost promptly — it must not hang until its request timeout."""
+        ElastiCacheIntegrationsConnectionLost promptly — it must not hang until its request timeout."""
         self.start_cache(failure="hang")
         self.connect_and_handshake(request_timeout=10.0)
 
@@ -896,7 +912,7 @@ class TestPhotonConnector:
             try:
                 self.send_request()
                 outcome.append("returned")
-            except PhotonConnectionLost:
+            except ElastiCacheIntegrationsConnectionLost:
                 outcome.append("connection-lost")
             except Exception as exc:  # noqa: BLE001
                 outcome.append(exc)
@@ -925,7 +941,7 @@ class TestPhotonConnector:
 
         self.conn.close()  # must not raise
 
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             fut.result(timeout=1)  # pending caller still failed
         self.conn.close()  # still idempotent
 
@@ -946,7 +962,7 @@ class TestPhotonConnector:
         self.connect_and_handshake()
         thread = self.conn._io_loop_thread.thread
 
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()  # server drops instead of replying
 
         self.await_io_thread_exit(thread)
@@ -968,7 +984,7 @@ class TestPhotonConnector:
         )
 
         start = time.monotonic()
-        with pytest.raises(PhotonConnectionLost):
+        with pytest.raises(ElastiCacheIntegrationsConnectionLost):
             self.send_request()
         assert time.monotonic() - start < 1.0, "caller waited out the request timeout"
 
@@ -977,7 +993,7 @@ class TestPhotonConnector:
 
     def test_close_from_the_io_thread_raises(self):
         """close() from the I/O thread is a programming error, not a deadlock: it would ask
-        that thread to join itself. It raises RuntimeError rather than PhotonError so the
+        that thread to join itself. It raises RuntimeError rather than ElastiCacheIntegrationsError so the
         before-send hook cannot swallow it as a cache miss."""
         self.connect()
         outcome: list = []
@@ -1006,18 +1022,20 @@ class TestPhotonConnector:
         port = probe.getsockname()[1]
         probe.close()  # nothing is listening -> the dial fails
 
-        conn = PhotonConnector("127.0.0.1", port, tls=False, connect_timeout=1.0)
-        with pytest.raises(PhotonConnectionError):
+        conn = ElastiCacheIntegrationsConnector("127.0.0.1", port, tls=False, connect_timeout=1.0)
+        with pytest.raises(ElastiCacheIntegrationsConnectionError):
             conn.connect()
 
-        assert not any(t.name == "photon-io-thread" for t in threading.enumerate())
+        assert not any(
+            t.name == "elasticache-integrations-io-thread" for t in threading.enumerate()
+        )
         assert conn._io_loop_thread.loop is None
 
     def test_second_connect_is_refused(self):
-        """PhotonConnector is single-use. A second connect() would overwrite the loop and
+        """ElastiCacheIntegrationsConnector is single-use. A second connect() would overwrite the loop and
         thread handles, orphaning the first pair with nothing left to close them."""
         self.connect()
-        with pytest.raises(PhotonConnectionError, match="single-use"):
+        with pytest.raises(ElastiCacheIntegrationsConnectionError, match="single-use"):
             self.conn.connect()
 
     def test_io_thread_declines_to_install_a_loop_after_close(self):
@@ -1025,13 +1043,13 @@ class TestPhotonConnector:
         the loop, so close() finds no loop to cancel. The thread must then decline to install
         one and report the closure to the waiting connect().
         Internals: the thread target driven directly with _closed pre-set."""
-        conn = PhotonConnector("h", 1, tls=False)
+        conn = ElastiCacheIntegrationsConnector("h", 1, tls=False)
         conn._closed = True
         conn_ready: Future = Future()
 
         conn._io_thread_main(conn_ready)  # returns as soon as the connection bails
 
-        with pytest.raises(PhotonConnectionError):
+        with pytest.raises(ElastiCacheIntegrationsConnectionError):
             conn_ready.result(timeout=1)
         assert conn._io_loop_thread.loop is None
         assert conn._io_loop_thread.main_task is None

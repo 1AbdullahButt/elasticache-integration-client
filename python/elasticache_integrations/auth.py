@@ -15,21 +15,23 @@ from developer_toolkit_elasticache import (
     ToolkitInputError,
 )
 
-from photon.exceptions import PhotonError
+from elasticache_integrations.exceptions import ElastiCacheIntegrationsError
 
 #: Default ElastiCache IAM user for Public Endpoint caches.
 DEFAULT_USER_ID = "default.iam-user"
 
 
-def _to_photon_error(exc: Exception, message: str) -> PhotonError:
+def _to_elasticache_integrations_error(
+    exc: Exception, message: str
+) -> ElastiCacheIntegrationsError:
     """Translate toolkit failures into the client's error taxonomy.
 
     Toolkit input errors carry static, actionable guidance and are safe to pass through.
     Unexpected failures get a stable generic message; callers chain the original as ``__cause__``.
     """
     if isinstance(exc, ToolkitInputError):
-        return PhotonError(str(exc))
-    return PhotonError(message)
+        return ElastiCacheIntegrationsError(str(exc))
+    return ElastiCacheIntegrationsError(message)
 
 
 class ManagedIamAuthTokenProvider:
@@ -42,14 +44,18 @@ class ManagedIamAuthTokenProvider:
         try:
             return self._manager.get_credentials()
         except Exception as exc:
-            raise _to_photon_error(exc, "Failed to obtain refreshed IAM auth token") from exc
+            raise _to_elasticache_integrations_error(
+                exc, "Failed to obtain refreshed IAM auth token"
+            ) from exc
 
     def refresh_auth(self) -> tuple[str, str]:
         """Force a replacement after the cache rejects the current token."""
         try:
             return self._manager.user_id, self._manager.refresh_token()
         except Exception as exc:
-            raise _to_photon_error(exc, "Failed to force-refresh IAM auth token") from exc
+            raise _to_elasticache_integrations_error(
+                exc, "Failed to force-refresh IAM auth token"
+            ) from exc
 
     def close(self) -> None:
         """Stop toolkit background refresh. Idempotent."""
@@ -66,7 +72,7 @@ def build_cache_auth_provider(
 ) -> ManagedIamAuthTokenProvider:
     """Build the managed cache auth provider."""
     if not cache_name:
-        raise PhotonError("cache_name is required for IAM authentication.")
+        raise ElastiCacheIntegrationsError("cache_name is required for IAM authentication.")
     session = botocore_session or botocore.session.Session()
     kwargs = {
         "serverless_cache_name": cache_name,
@@ -79,5 +85,7 @@ def build_cache_auth_provider(
     try:
         manager = ElastiCacheIAMAuthTokenManager(**kwargs)
     except Exception as exc:
-        raise _to_photon_error(exc, "Failed to initialize IAM token auto-refresh") from exc
+        raise _to_elasticache_integrations_error(
+            exc, "Failed to initialize IAM token auto-refresh"
+        ) from exc
     return ManagedIamAuthTokenProvider(manager)

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from photon.idempotency import IDEMPOTENT_OPERATIONS, is_idempotent_operation
+from elasticache_integrations.idempotency import IDEMPOTENT_OPERATIONS, is_idempotent_operation
 
 
 def test_packaged_operations_match_shared_catalog():

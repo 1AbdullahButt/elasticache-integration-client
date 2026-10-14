@@ -1,14 +1,14 @@
-"""PhotonSession serves requests over a cache connection, and decides what to do when there is none.
+"""ElastiCacheIntegrationsSession serves requests over a cache connection, and decides what to do when there is none.
 
-The connection itself is owned by a :class:`~photon.connection_manager.ConnectionManager`, which
+The connection itself is owned by a :class:`~elasticache_integrations.connection_manager.ConnectionManager`, which
 brings it up, rebuilds it when it is lost, and holds the fallback window open meanwhile. The session
-supplies the Photon half: the AUTH and config exchange each new connection needs, the predicates
+supplies the ElastiCacheIntegrations half: the AUTH and config exchange each new connection needs, the predicates
 cacheable, and the request path.
 
 While no connection is available, requests are declined so the caller sends them to the origin
 service itself — for as long as the fallback window allows.
 
-A :class:`~photon.refresh.Refresher` runs for as long as the session is open, so the config
+A :class:`~elasticache_integrations.refresh.Refresher` runs for as long as the session is open, so the config
 can be re-resolved on the live connection rather than only when a new one is built. A refresh that
 fails leaves the current config in place. Once the staleness window passes with no config confirmed
 by the server, the config is no longer trusted: the connection is dropped so a new one re-resolves
@@ -22,23 +22,31 @@ import threading
 import time
 from collections.abc import Callable
 
-from photon.config_policy import ConfigPolicy
-from photon.connection import PhotonConnector
-from photon.connection_manager import ConnectionManager, ConnectionState
-from photon.exceptions import (
-    PhotonCacheUnavailable,
-    PhotonConfigError,
-    PhotonConfigUnevaluable,
-    PhotonConnectionError,
-    PhotonError,
-    PhotonOverridesRejected,
-    PhotonRejectedError,
+from elasticache_integrations.config_policy import ConfigPolicy
+from elasticache_integrations.connection import ElastiCacheIntegrationsConnector
+from elasticache_integrations.connection_manager import ConnectionManager, ConnectionState
+from elasticache_integrations.exceptions import (
+    ElastiCacheIntegrationsCacheUnavailable,
+    ElastiCacheIntegrationsConfigError,
+    ElastiCacheIntegrationsConfigUnevaluable,
+    ElastiCacheIntegrationsConnectionError,
+    ElastiCacheIntegrationsError,
+    ElastiCacheIntegrationsOverridesRejected,
+    ElastiCacheIntegrationsRejectedError,
 )
-from photon.models import PhotonRequest, PhotonResponse, ResolvedConfig
-from photon.refresh import Refresher
-from photon.reconnect_policy import ReconnectPolicy
-from photon.predicates import CompiledPredicate, compile_predicates, should_route_to_photon
-from photon.protocol import (
+from elasticache_integrations.models import (
+    ElastiCacheIntegrationsRequest,
+    ElastiCacheIntegrationsResponse,
+    ResolvedConfig,
+)
+from elasticache_integrations.refresh import Refresher
+from elasticache_integrations.reconnect_policy import ReconnectPolicy
+from elasticache_integrations.predicates import (
+    CompiledPredicate,
+    compile_predicates,
+    should_route_to_cache,
+)
+from elasticache_integrations.protocol import (
     parse_config_response,
     parse_request_response,
     serialize_config,
@@ -50,9 +58,9 @@ logger = logging.getLogger(__name__)
 _AUTH_ERROR = "AUTH_ERROR"
 
 
-def _config_failure_cause(exc: PhotonError) -> str:
+def _config_failure_cause(exc: ElastiCacheIntegrationsError) -> str:
     """The cause of a config failure that cannot fix itself, worded the same on every path."""
-    if isinstance(exc, PhotonOverridesRejected):
+    if isinstance(exc, ElastiCacheIntegrationsOverridesRejected):
         return "the proxy rejected the overrides (CONFIG_INVALID)"
     return "the config has a predicate this client cannot evaluate"
 
@@ -64,20 +72,26 @@ def parse_endpoint(endpoint: str) -> tuple[str, int]:
     Uses ``rpartition(":")`` so IPv6/host forms with colons keep the final ``:port``.
     """
     if not endpoint or ":" not in endpoint:
-        raise PhotonConfigError(f"Invalid endpoint '{endpoint}': expected host:port")
+        raise ElastiCacheIntegrationsConfigError(
+            f"Invalid endpoint '{endpoint}': expected host:port"
+        )
     host, _, port_str = endpoint.rpartition(":")
     if not host:
-        raise PhotonConfigError(f"Invalid endpoint '{endpoint}': host cannot be empty")
+        raise ElastiCacheIntegrationsConfigError(
+            f"Invalid endpoint '{endpoint}': host cannot be empty"
+        )
     try:
         port = int(port_str)
     except ValueError as exc:
-        raise PhotonConfigError(f"Invalid port in endpoint '{endpoint}'") from exc
+        raise ElastiCacheIntegrationsConfigError(f"Invalid port in endpoint '{endpoint}'") from exc
     if not (1 <= port <= 65535):
-        raise PhotonConfigError(f"Port out of range in endpoint '{endpoint}': {port}")
+        raise ElastiCacheIntegrationsConfigError(
+            f"Port out of range in endpoint '{endpoint}': {port}"
+        )
     return host, port
 
 
-class PhotonSession:
+class ElastiCacheIntegrationsSession:
     """Serves requests over the connection a :class:`ConnectionManager` keeps alive.
 
     Stays open until ``close()``.
@@ -85,7 +99,7 @@ class PhotonSession:
 
     def __init__(
         self,
-        connector_factory: Callable[[], PhotonConnector],
+        connector_factory: Callable[[], ElastiCacheIntegrationsConnector],
         overrides: dict | None = None,
         *,
         policy: ReconnectPolicy | None = None,
@@ -96,16 +110,16 @@ class PhotonSession:
 
         Args:
             connector_factory: Returns a new, unconnected connector each time it is called.
-            overrides: ``photon.config`` overrides to send when configuring. The proxy resolves
+            overrides: ``aws.config`` overrides to send when configuring. The proxy resolves
                 them and answers with the config the session then routes by.
             policy: Reconnect and fallback behavior; see
-                :class:`~photon.reconnect_policy.ReconnectPolicy`. ``None`` uses the defaults.
+                :class:`~elasticache_integrations.reconnect_policy.ReconnectPolicy`. ``None`` uses the defaults.
             config_policy: How long the resolved config stays trusted while refreshes are failing;
-                see :class:`~photon.config_policy.ConfigPolicy`. ``None`` uses the defaults.
+                see :class:`~elasticache_integrations.config_policy.ConfigPolicy`. ``None`` uses the defaults.
             close_callback: Optional owned-resource cleanup run once when the session closes.
 
         Raises:
-            PhotonError: The connection could not be opened; see
+            ElastiCacheIntegrationsError: The connection could not be opened; see
                 :meth:`ConnectionManager.init_connection`.
                 Creating a session fails loudly rather than handing back one that never caches.
             RuntimeError: The refresher thread could not be started. The connection is closed
@@ -131,7 +145,7 @@ class PhotonSession:
             self._config_refresher = Refresher(
                 self._config.refresh_interval,
                 self._refresh_once,
-                name="photon-refresher",
+                name="elasticache-integrations-refresher",
                 jitter=policy.jitter,
             )
             self._config_refresher.start()
@@ -140,7 +154,7 @@ class PhotonSession:
             self._reauth_runner = Refresher(
                 policy.auth_refresh_interval,
                 self._reauth_once,
-                name="photon-reauth",
+                name="elasticache-integrations-reauth",
                 jitter=policy.jitter,
                 failure_delay=policy.delay_for,
             )
@@ -150,7 +164,7 @@ class PhotonSession:
                 self.close()
             except Exception:
                 logger.warning(
-                    "Photon session cleanup failed during initialization",
+                    "ElastiCacheIntegrations session cleanup failed during initialization",
                     exc_info=True,
                 )
             raise
@@ -164,7 +178,7 @@ class PhotonSession:
         """Whether the config has gone unconfirmed long enough to stop trusting it."""
         return time.monotonic() >= self._config_deadline
 
-    def _configure(self, connector: PhotonConnector) -> None:
+    def _configure(self, connector: ElastiCacheIntegrationsConnector) -> None:
         """Handshake with a freshly connected connector and resolve its config, making it usable.
 
         Called for the initial connection and for every reconnect, so each connection negotiates
@@ -183,7 +197,10 @@ class PhotonSession:
                 connector.execute(command, *args, timeout=connector.config_timeout)
             )
             installed = self._replace_config(config, connector)
-        except (PhotonOverridesRejected, PhotonConfigUnevaluable) as exc:
+        except (
+            ElastiCacheIntegrationsOverridesRejected,
+            ElastiCacheIntegrationsConfigUnevaluable,
+        ) as exc:
             logger.error(
                 "Configuring a connection failed: %s. The connection is closed and retried",
                 _config_failure_cause(exc),
@@ -191,9 +208,13 @@ class PhotonSession:
             )
             raise
         if not installed:
-            raise PhotonConnectionError("connection closed before its config could be installed")
+            raise ElastiCacheIntegrationsConnectionError(
+                "connection closed before its config could be installed"
+            )
 
-    def _replace_config(self, config: ResolvedConfig, source: PhotonConnector) -> bool:
+    def _replace_config(
+        self, config: ResolvedConfig, source: ElastiCacheIntegrationsConnector
+    ) -> bool:
         """Install a resolved config, the predicates compiled from it, and its refresh interval.
 
         Installs only while ``source`` (the connector the config came from) is still alive, under
@@ -214,7 +235,7 @@ class PhotonSession:
             self._restart_staleness_window()
         return True
 
-    def _confirm_config(self, source: PhotonConnector) -> bool:
+    def _confirm_config(self, source: ElastiCacheIntegrationsConnector) -> bool:
         """Restart the staleness window on an "unchanged" reply, under the same rule as an install.
 
         Returns:
@@ -235,7 +256,7 @@ class PhotonSession:
         self._config_deadline = time.monotonic() + self._config_policy.staleness_duration
 
     def _refresh_once(self) -> None:
-        """Send one no-argument ``photon.config`` refresh and apply the result.
+        """Send one no-argument ``aws.config`` refresh and apply the result.
 
         The overrides were sent when the connection was configured, so the server already has them.
         A null reply installs nothing; any other reply goes through ``_replace_config``. Either way
@@ -255,15 +276,20 @@ class PhotonSession:
                 installed = self._confirm_config(connector)
             else:
                 installed = self._replace_config(parse_config_response(reply), connector)
-        except PhotonError as exc:
+        except ElastiCacheIntegrationsError as exc:
             self._refresh_failed(exc, connector)
             return
         if not installed:
             logger.debug("Config refresh reply arrived after its connection closed; dropped")
 
-    def _refresh_failed(self, exc: PhotonError, connector: PhotonConnector) -> None:
+    def _refresh_failed(
+        self, exc: ElastiCacheIntegrationsError, connector: ElastiCacheIntegrationsConnector
+    ) -> None:
         """Log a failed refresh, and drop ``connector`` once the staleness window has passed."""
-        if isinstance(exc, (PhotonOverridesRejected, PhotonConfigUnevaluable)):
+        if isinstance(
+            exc,
+            (ElastiCacheIntegrationsOverridesRejected, ElastiCacheIntegrationsConfigUnevaluable),
+        ):
             logger.error(
                 "Config refresh failed: %s. Keeping the last good config until the staleness "
                 "window drops the connection",
@@ -289,8 +315,10 @@ class PhotonSession:
         if connector is not None:
             connector.authenticate()
 
-    def request(self, request: PhotonRequest) -> PhotonResponse | None:
-        """Route a request to Photon, or return None to let the caller handle it.
+    def request(
+        self, request: ElastiCacheIntegrationsRequest
+    ) -> ElastiCacheIntegrationsResponse | None:
+        """Route a request to ElastiCacheIntegrations, or return None to let the caller handle it.
 
         A request is passed through when it does not match any resolved predicate,
         or when the cache is disconnected and the fallback window is still open.
@@ -300,17 +328,17 @@ class PhotonSession:
         (``request_wait``) for the reconnect to land before falling back — so a quick
         reconnect is ridden out rather than sending the request to the origin.
 
-        Once a request is sent to Photon, failures propagate to the hook. For a
+        Once a request is sent to ElastiCacheIntegrations, failures propagate to the hook. For a
         replay-safe operation the hook returns them through botocore as retryable, so
         the SDK or application decides whether to retry them.
 
         Raises:
-            PhotonCacheUnavailable: If the cache is disconnected and the fallback
+            ElastiCacheIntegrationsCacheUnavailable: If the cache is disconnected and the fallback
                 window has closed.
         """
         if not self.is_open:
-            raise PhotonError("request() called on a closed session")
-        if not should_route_to_photon(self._predicates, request):
+            raise ElastiCacheIntegrationsError("request() called on a closed session")
+        if not should_route_to_cache(self._predicates, request):
             return None
 
         # Read the connector once; the reconnect thread may replace it concurrently.
@@ -320,13 +348,13 @@ class PhotonSession:
             connector = self._connection_manager.wait_for_connector()
         if connector is None:
             if not self._connection_manager.fallback_allowed():
-                raise PhotonCacheUnavailable(endpoint_url=request.url)
+                raise ElastiCacheIntegrationsCacheUnavailable(endpoint_url=request.url)
             return None  # pass through
 
         command, args = serialize_request(request)
         try:
             return parse_request_response(connector.execute(command, *args))
-        except PhotonRejectedError as exc:
+        except ElastiCacheIntegrationsRejectedError as exc:
             if exc.code != _AUTH_ERROR:
                 raise
             self._connection_manager.invalidate_connection(connector)
