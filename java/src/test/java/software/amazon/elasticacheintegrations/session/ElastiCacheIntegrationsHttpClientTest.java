@@ -8,8 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -17,8 +22,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.InterceptorContext;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
+import software.amazon.awssdk.http.ContentStreamProvider;
 import software.amazon.awssdk.http.ExecutableHttpRequest;
 import software.amazon.awssdk.http.HttpExecuteRequest;
 import software.amazon.awssdk.http.HttpExecuteResponse;
@@ -26,6 +38,8 @@ import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.SdkHttpFullRequest;
 import software.amazon.awssdk.http.SdkHttpFullResponse;
 import software.amazon.awssdk.http.SdkHttpMethod;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.utils.IoUtils;
 import software.amazon.elasticacheintegrations.connection.ElastiCacheIntegrationsConnector;
 import software.amazon.elasticacheintegrations.connection.ElastiCacheIntegrationsRequestCancellation;
 import software.amazon.elasticacheintegrations.exception.ElastiCacheIntegrationsCacheUnavailable;
@@ -209,6 +223,92 @@ class ElastiCacheIntegrationsHttpClientTest {
     }
 
     @Test
+    void streamingBodyPassesThrough() throws Exception {
+        StubSession session = new StubSession();
+        RecordingHttpClient origin = new RecordingHttpClient();
+        RequestBody body = RequestBody.fromInputStream(readOnce("payload"), 7);
+
+        HttpExecuteResponse response =
+                sendThroughInterceptor(session, origin, body.contentStreamProvider());
+
+        assertEquals(201, response.httpResponse().statusCode());
+        assertEquals(0, session.requestCount.get());
+        assertEquals("payload", originBody(origin));
+    }
+
+    /** Bodies the SDK names {@code Stream} or {@code File} skip Cache and reach the origin intact. */
+    @ParameterizedTest
+    @ValueSource(strings = {"fromInputStream", "fromFile", "fromContentProviderWithoutLength"})
+    void uncarriableBodiesAreDeclined(String factory, @TempDir Path dir) throws Exception {
+        StubSession session = new StubSession();
+        RecordingHttpClient origin = new RecordingHttpClient();
+        byte[] payload = "payload".getBytes(StandardCharsets.UTF_8);
+        RequestBody body;
+        switch (factory) {
+            case "fromInputStream":
+                body = RequestBody.fromInputStream(readOnce("payload"), payload.length);
+                break;
+            case "fromFile":
+                body = RequestBody.fromFile(Files.write(dir.resolve("upload.bin"), payload));
+                break;
+            default:
+                body =
+                        RequestBody.fromContentProvider(
+                                () -> new ByteArrayInputStream(payload), "application/octet-stream");
+        }
+
+        sendThroughInterceptor(session, origin, body.contentStreamProvider());
+
+        assertEquals(0, session.requestCount.get());
+        assertEquals("payload", originBody(origin));
+    }
+
+    /**
+     * Bodies named {@code Bytes}, and custom providers with a known length (the shape DynamoDB's
+     * marshaller produces), are read for Cache.
+     */
+    @ParameterizedTest
+    @CsvSource({
+        "fromBytes, payload",
+        "fromString, payload",
+        "empty, ''",
+        "fromContentProvider, payload"
+    })
+    void bodyConversion(String factory, String expected) throws Exception {
+        StubSession session = new StubSession();
+        session.response =
+                new ElastiCacheIntegrationsResponse(
+                        200, Collections.emptyMap(), "cache".getBytes(StandardCharsets.UTF_8));
+        RecordingHttpClient origin = new RecordingHttpClient();
+        byte[] payload = "payload".getBytes(StandardCharsets.UTF_8);
+        RequestBody body;
+        switch (factory) {
+            case "fromBytes":
+                body = RequestBody.fromBytes(payload);
+                break;
+            case "fromString":
+                body = RequestBody.fromString("payload");
+                break;
+            case "empty":
+                body = RequestBody.empty();
+                break;
+            default:
+                body =
+                        RequestBody.fromContentProvider(
+                                () -> new ByteArrayInputStream(payload),
+                                payload.length,
+                                "application/octet-stream");
+        }
+
+        HttpExecuteResponse response =
+                sendThroughInterceptor(session, origin, body.contentStreamProvider());
+
+        assertEquals(200, response.httpResponse().statusCode());
+        assertEquals(expected, new String(session.lastRequest.getBody(), StandardCharsets.UTF_8));
+        assertEquals(0, origin.prepareCount.get());
+    }
+
+    @Test
     void unexpectedRuntimeExceptionPropagates() {
         StubSession session = new StubSession();
         session.failure = new IllegalStateException("bug");
@@ -320,6 +420,50 @@ class ElastiCacheIntegrationsHttpClientTest {
         assertEquals(1, owned.closeCount.get());
     }
 
+    /** Drive the sync interceptor and its transport in the order the SDK calls them. */
+    private static HttpExecuteResponse sendThroughInterceptor(
+            ElastiCacheIntegrationsSession session, SdkHttpClient origin, ContentStreamProvider body)
+            throws IOException {
+        ElastiCacheIntegrationsInterceptor interceptor =
+                new ElastiCacheIntegrationsInterceptor(session, origin);
+        SdkHttpFullRequest httpRequest =
+                SdkHttpFullRequest.builder()
+                        .method(SdkHttpMethod.POST)
+                        .uri(URI.create("https://dynamodb.us-east-1.amazonaws.com/"))
+                        .contentStreamProvider(body)
+                        .build();
+        InterceptorContext context =
+                InterceptorContext.builder()
+                        .request(PutItemRequest.builder().build())
+                        .httpRequest(httpRequest)
+                        .build();
+        ExecutionAttributes attributes = new ExecutionAttributes();
+        interceptor.modifyHttpRequest(context, attributes);
+        interceptor.beforeTransmission(context, attributes);
+        return interceptor
+                .getHttpClient()
+                .prepareRequest(
+                        HttpExecuteRequest.builder().request(httpRequest).contentStreamProvider(body).build())
+                .call();
+    }
+
+    /** A stream that, like a socket or pipe, can be read only once. */
+    private static InputStream readOnce(String content) {
+        return new FilterInputStream(
+                new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))) {
+            @Override
+            public boolean markSupported() {
+                return false;
+            }
+        };
+    }
+
+    private static String originBody(RecordingHttpClient origin) throws IOException {
+        try (InputStream in = origin.request.get().contentStreamProvider().get().newStream()) {
+            return new String(IoUtils.toByteArray(in), StandardCharsets.UTF_8);
+        }
+    }
+
     private static ElastiCacheIntegrationsHttpClient newClient(
             ElastiCacheIntegrationsSession session, SdkHttpClient origin, boolean ownsOrigin) {
         return newClient(session, origin, ownsOrigin, "ListTables");
@@ -374,6 +518,7 @@ class ElastiCacheIntegrationsHttpClientTest {
         private boolean open = true;
         private boolean healthy = true;
         private final AtomicInteger requestCount = new AtomicInteger();
+        private volatile ElastiCacheIntegrationsRequest lastRequest;
         private final CountDownLatch requestStarted = new CountDownLatch(1);
         private volatile boolean blockUntilCancelled;
 
@@ -401,6 +546,7 @@ class ElastiCacheIntegrationsHttpClientTest {
                 ElastiCacheIntegrationsRequest request,
                 ElastiCacheIntegrationsRequestCancellation cancellation) {
             requestCount.incrementAndGet();
+            lastRequest = request;
             requestStarted.countDown();
             if (blockUntilCancelled) {
                 while (!cancellation.isCancelled()) {

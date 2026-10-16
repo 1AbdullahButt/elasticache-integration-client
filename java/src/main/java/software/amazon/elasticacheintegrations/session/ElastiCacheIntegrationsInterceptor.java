@@ -1,8 +1,11 @@
 package software.amazon.elasticacheintegrations.session;
 
+import java.util.logging.Logger;
 import software.amazon.awssdk.core.interceptor.Context;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
+import software.amazon.awssdk.http.ContentStreamProvider;
+import software.amazon.awssdk.http.ContentStreamProvider.ProviderType;
 import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.SdkHttpFullRequest;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
@@ -44,6 +47,9 @@ import software.amazon.elasticacheintegrations.model.ElastiCacheIntegrationsRequ
  * <p>Or use {@link ElastiCacheIntegrationsHandle} for managed attachment/detachment.
  */
 public class ElastiCacheIntegrationsInterceptor implements ExecutionInterceptor {
+
+    private static final Logger LOGGER =
+            Logger.getLogger(ElastiCacheIntegrationsInterceptor.class.getName());
 
     private final ElastiCacheIntegrationsRequestContext requestContext;
     private final ElastiCacheIntegrationsHttpClient httpClient;
@@ -101,10 +107,33 @@ public class ElastiCacheIntegrationsInterceptor implements ExecutionInterceptor 
     public SdkHttpFullRequest modifyHttpRequest(
             Context.ModifyHttpRequest context, ExecutionAttributes executionAttributes) {
         SdkHttpFullRequest sdkRequest = (SdkHttpFullRequest) context.httpRequest();
+        if (!isCarriableBody(sdkRequest)) {
+            // An InputStream may be readable only once, and a file may be too large to buffer.
+            LOGGER.fine("Streaming request body; passing through to the service");
+            requestContext.capturePassThrough(executionAttributes);
+            return sdkRequest;
+        }
         ElastiCacheIntegrationsRequest cacheRequest =
                 SdkAdapters.toElastiCacheIntegrationsRequest(sdkRequest, executionAttributes);
         requestContext.capture(cacheRequest, executionAttributes);
         return sdkRequest;
+    }
+
+    /**
+     * Whether Cache can carry the body. A body that streams from an {@code InputStream} or a file
+     * cannot, including {@code RequestBody.fromContentProvider} without a length, which the SDK wraps
+     * as a stream. Bodies from bytes, strings and custom providers with a length (including
+     * DynamoDB's) are read for Cache.
+     */
+    private static boolean isCarriableBody(SdkHttpFullRequest sdkRequest) {
+        return !sdkRequest
+                .contentStreamProvider()
+                .map(ContentStreamProvider::name)
+                .filter(
+                        name ->
+                                ProviderType.STREAM.getName().equals(name)
+                                        || ProviderType.FILE.getName().equals(name))
+                .isPresent();
     }
 
     @Override
