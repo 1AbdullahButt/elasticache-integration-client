@@ -123,11 +123,11 @@ connection-wide at the top level or per table under `table_overrides`; a `table_
 entry is settings only and never puts a table in scope.
 
 ```python
-cache_policy_overrides={
+cache_policy_overrides = {
     "cached_tables": ["Users", "Sessions"],
     "cached_operations": ["GetItem", "Query"],
     "item_ttl": 500,
-    "item_negative_ttl": 0,          # do not cache "this item does not exist"
+    "item_negative_ttl": 0,  # do not cache "this item does not exist"
     "table_overrides": {"Users": {"item_ttl": 60}},
 }
 ```
