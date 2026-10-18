@@ -212,6 +212,13 @@ def test_empty_transact_items_does_not_route():
     )
 
 
+def test_transact_action_without_a_table_name_does_not_route():
+    """The "TableName" guard: a table-less action is a clean non-match, not an error."""
+    predicates = compile_predicates(table_allowlist_config("Users"))
+    body = json.dumps({"TransactItems": [{"Get": {"Key": {}}}]}).encode()
+    assert should_route_to_cache(predicates, _request("TransactGetItems", body=body)) is False
+
+
 def test_transact_get_routes_under_the_all_reads_predicate():
     """With no allowlist, TransactGetItems matches the service+operation predicate."""
     predicates = compile_predicates(DEFAULT_RESOLVED_CONFIG)
