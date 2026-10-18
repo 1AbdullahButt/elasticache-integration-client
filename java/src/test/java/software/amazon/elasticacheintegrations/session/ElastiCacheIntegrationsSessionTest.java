@@ -719,7 +719,7 @@ class ElastiCacheIntegrationsSessionTest {
     @Test
     void open_withConfigOverrides_sendsOverrides() {
         Map<String, Object> overrides = new HashMap<>();
-        overrides.put("refresh_interval", 120);
+        overrides.put("item_ttl", 120);
 
         ElastiCacheIntegrationsSession session =
                 new ElastiCacheIntegrationsSession(createConnection(), TEST_USER, TEST_TOKEN, overrides);

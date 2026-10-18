@@ -42,7 +42,18 @@ export interface ElastiCacheIntegrationsClientOptions<TConfig extends object> {
   fallbackDuration?: number | null;
   /** Advanced reconnection and fallback configuration. */
   reconnectPolicy?: ReconnectPolicyOptions;
-  /** Overrides sent by the aws.config handshake. */
+  /**
+   * Overrides sent in the `aws.config` handshake.
+   *
+   * `cached_tables` and `cached_operations` are allowlists — each empty or absent means
+   * everything — so keeping a table out of the cache means naming the tables that should be
+   * cached rather than the one that should not. The lifetimes (`item_ttl`, `item_negative_ttl`,
+   * `query_ttl`, `scan_ttl`) and `item_write_behavior` apply connection-wide, or per table under
+   * `table_overrides`.
+   *
+   * The object is sent as given. A field name the proxy does not recognise is ignored, so a typo
+   * or a stale key is dropped without an error.
+   */
   overrides?: Readonly<Record<string, unknown>>;
   /**
    * How long, in seconds, the resolved config stays trusted while refreshes are failing. Past it
