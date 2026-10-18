@@ -39,7 +39,7 @@ function fakeConnector(
       // A no-argument aws.config means "nothing changed", as the cache does.
       if (args.length === 0) return null;
       return Buffer.from(
-        '{"version":"v1","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
+        '{"version":"1.0","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
       );
     }),
     close: vi.fn(async () => undefined),
@@ -156,7 +156,7 @@ describe("ElastiCacheIntegrationsSession", () => {
 
   it("opens in lifecycle order and stores the resolved config", async () => {
     const connector = fakeConnector();
-    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { item_ttl: 300 });
     expect(session.config).toBeUndefined();
 
     await session.open();
@@ -165,11 +165,11 @@ describe("ElastiCacheIntegrationsSession", () => {
     expect(connector.handshake).toHaveBeenCalledOnce();
     expect(connector.execute).toHaveBeenCalledWith(
       "aws.config",
-      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","item_ttl":300}`),
     );
     expect(session.config).toEqual(expect.any(ResolvedConfig));
     expect(session.config.raw).toEqual({
-      version: "v1",
+      version: "1.0",
       refresh_interval: 60,
       predicates: [{ expr: "true", vars: {} }],
     });
@@ -225,7 +225,7 @@ describe("ElastiCacheIntegrationsSession", () => {
       execute: vi.fn(async (command: string) =>
         command === "aws.config"
           ? Buffer.from(
-              '{"version":"v1","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
+              '{"version":"1.0","refresh_interval":60,"predicates":[{"expr":"true","vars":{}}]}',
             )
           : new RespError("AUTH_ERROR", "missing FAS"),
       ),
@@ -332,7 +332,7 @@ describe("ElastiCacheIntegrationsSession", () => {
         Buffer.from(`{"version":"${PROTOCOL_VERSION}"}`),
       );
     });
-    resolveConfig(Buffer.from('{"version":"v1","refresh_interval":60}'));
+    resolveConfig(Buffer.from('{"version":"1.0","refresh_interval":60}'));
     session.destroy();
 
     await expect(opening).rejects.toThrow("Session closed during open()");
@@ -1283,7 +1283,7 @@ function reauthenticateOnce(session: ElastiCacheIntegrationsSession): Promise<vo
 }
 
 const REFRESHED_CONFIG = Buffer.from(
-  '{"version":"v2","refresh_interval":30,"predicates":[{"expr":"operation == \'GetItem\'","vars":{}}]}',
+  '{"version":"1.0","refresh_interval":30,"predicates":[{"expr":"operation == \'GetItem\'","vars":{}}]}',
 );
 
 // Short enough to read, long enough that only a deliberate advance reaches it.
@@ -1301,7 +1301,7 @@ function putItem(): ElastiCacheIntegrationsRequest {
 describe("ElastiCacheIntegrationsSession config refresh", () => {
   it("re-issues aws.config with no argument after the handshake", async () => {
     const connector = fakeConnector();
-    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { item_ttl: 300 });
     await session.open();
     vi.mocked(connector.execute).mockClear();
 
@@ -1314,7 +1314,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
 
   it("resends the overrides until a parseable config acknowledges them", async () => {
     const connector = fakeConnector();
-    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { item_ttl: 300 });
     await session.open();
     // Simulate a session whose overrides the cache has not confirmed yet.
     (session as unknown as { overridesSent: boolean }).overridesSent = false;
@@ -1329,7 +1329,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
     expect(connector.execute).toHaveBeenNthCalledWith(
       1,
       "aws.config",
-      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","item_ttl":300}`),
     );
     expect(connector.execute).toHaveBeenNthCalledWith(2, "aws.config");
     await session.close();
@@ -1337,11 +1337,11 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
 
   it.each([
     ["a failed send", () => Promise.reject(new ElastiCacheIntegrationsError("send failed"))],
-    ["a malformed reply", () => Promise.resolve(Buffer.from('{"version":"v2"}'))],
+    ["a malformed reply", () => Promise.resolve(Buffer.from('{"version":"1.0"}'))],
   ])("sends unacknowledged overrides again after %s", async (_name, reply) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
-    const session = new ElastiCacheIntegrationsSession(connector, { ttl: 300 });
+    const session = new ElastiCacheIntegrationsSession(connector, { item_ttl: 300 });
     await session.open();
     // Simulate a session whose overrides the cache has not confirmed yet.
     (session as unknown as { overridesSent: boolean }).overridesSent = false;
@@ -1358,7 +1358,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
 
     expect(connector.execute).toHaveBeenCalledWith(
       "aws.config",
-      Buffer.from(`{"version":"${PROTOCOL_VERSION}","ttl":300}`),
+      Buffer.from(`{"version":"${PROTOCOL_VERSION}","item_ttl":300}`),
     );
     expect((session as unknown as { overridesSent: boolean }).overridesSent).toBe(true);
     warn.mockRestore();
@@ -1388,7 +1388,9 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
 
     await refreshOnce(session);
 
-    expect(session.config?.version).toBe("v2");
+    // A refresh carries no overrides, so it cannot renegotiate: the version is the one
+    // settled at the handshake. The interval and the predicates are what moved.
+    expect(session.config?.version).toBe(PROTOCOL_VERSION);
     expect(session.config?.refreshInterval).toBe(30);
     await expect(session.request(putItem())).resolves.toBeUndefined();
     await session.close();
@@ -1415,7 +1417,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
       () => Promise.reject(new ElastiCacheIntegrationsError("aws.config failed")),
     ],
     ["a malformed reply", () => Promise.resolve(Buffer.from("not json"))],
-    ["a config missing refresh_interval", () => Promise.resolve(Buffer.from('{"version":"v2"}'))],
+    ["a config missing refresh_interval", () => Promise.resolve(Buffer.from('{"version":"1.0"}'))],
   ])("keeps the last known-good config after %s", async (_name, reply) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const connector = fakeConnector();
@@ -1448,7 +1450,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
     const config = session.config;
     // An interval whose jittered delay exceeds Node's maximum schedulable timeout.
     vi.mocked(connector.execute).mockResolvedValue(
-      Buffer.from('{"version":"v2","refresh_interval":2147484,"predicates":[]}'),
+      Buffer.from('{"version":"1.0","refresh_interval":2147484,"predicates":[]}'),
     );
 
     await expect(refreshOnce(session)).resolves.toBeUndefined();
@@ -1621,7 +1623,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
     const setInterval = vi.spyOn(refresher, "setInterval");
     vi.mocked(connector.execute).mockResolvedValue(
       Buffer.from(
-        '{"version":"v2","refresh_interval":30,"predicates":[' +
+        '{"version":"1.0","refresh_interval":30,"predicates":[' +
           '{"expr":"operation == \'GetItem\'","vars":{}},{"expr":"this is not (valid CEL"}]}',
       ),
     );
@@ -1671,7 +1673,7 @@ describe("ElastiCacheIntegrationsSession config refresh", () => {
     ],
     [
       "an unevaluable config",
-      Buffer.from('{"version":"v1","refresh_interval":60,"predicates":[{"expr":"(("}]}'),
+      Buffer.from('{"version":"1.0","refresh_interval":60,"predicates":[{"expr":"(("}]}'),
       ElastiCacheIntegrationsConfigUnevaluable,
     ],
   ])("fails to open on %s and alarms at error level", async (_, reply, ErrorType) => {

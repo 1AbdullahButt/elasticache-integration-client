@@ -60,7 +60,7 @@ ddb = elasticache_integrations.client(
     client_configuration=elasticache_integrations.ElastiCacheIntegrationsClientConfiguration(
         cache_request_timeout=2.0,
         fallback_duration=60,
-        cache_policy_overrides={"exclude_tables": ["audit-log"]},
+        cache_policy_overrides={"cached_tables": ["orders", "sessions"]},
         iam_token_refresh_delay=300,
     ),
 )
@@ -70,9 +70,35 @@ ddb = elasticache_integrations.client(
 |---|---|---|
 | `cache_request_timeout` | 5 s | How long to wait for each ElastiCacheIntegrations request's reply. |
 | `fallback_duration` | `None` (indefinite) | How long requests may go to the origin service while there is no cache connection (see below). |
-| `cache_policy_overrides` | `None` | Settings that change what ElastiCacheIntegrations caches, such as tables to exclude and cache entry lifetimes. |
+| `cache_policy_overrides` | `None` | Settings that change what ElastiCacheIntegrations caches: `cached_tables` and `cached_operations` allowlists, and the cache entry lifetimes. See below. |
 | `cache_policy_timeout` | 3600 s | How long ElastiCacheIntegrations may use a cache policy without confirmation from the cache. |
 | `iam_token_refresh_delay` | 300 s | When the IAM toolkit signs a replacement token in the background. |
+
+### Cache policy overrides
+
+`cached_tables` and `cached_operations` are **allowlists**, and they intersect: only those
+operations, on only those tables. Each one empty or absent means everything, so the example
+above caches `orders` and `sessions` and nothing else. There is no exclude form — to keep one
+table out of the cache, name the tables that should be in it.
+
+Lifetimes are set per category (`item_ttl`, `item_negative_ttl`, `query_ttl`, `scan_ttl`),
+connection-wide at the top level or per table under `table_overrides`; a `table_overrides`
+entry is settings only and never puts a table in scope.
+
+```python
+cache_policy_overrides={
+    "cached_tables": ["orders", "sessions"],
+    "cached_operations": ["GetItem", "Query"],
+    "item_ttl": 500,
+    "item_negative_ttl": 0,          # do not cache "this item does not exist"
+    "table_overrides": {"orders": {"item_ttl": 60}},
+}
+```
+
+A value the cache does not allow is refused at connect time with
+`ElastiCacheIntegrationsOverridesRejected`, rather than being quietly adjusted. A field name
+the cache does not recognise is **ignored**, so a typo fails silently — the names above are
+the whole set.
 
 Building `ElastiCacheIntegrationsClientConfiguration` raises `ElastiCacheIntegrationsConfigError` for a value that is not usable.
 

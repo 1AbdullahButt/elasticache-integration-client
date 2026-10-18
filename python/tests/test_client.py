@@ -225,7 +225,7 @@ def test_client_passes_cache_policy_overrides_to_the_session(monkeypatch):
     )
     monkeypatch.setattr(client_mod, "ElastiCacheIntegrationsHandle", lambda *a, **k: MagicMock())
 
-    overrides = {"exclude_tables": ["t"]}
+    overrides = {"cached_tables": ["t"]}
     configuration = ElastiCacheIntegrationsClientConfiguration(cache_policy_overrides=overrides)
     client_mod.client(
         "dynamodb", endpoint="cache:6379", cache_name="c", client_configuration=configuration
@@ -242,13 +242,13 @@ def test_client_copies_cache_policy_overrides_before_passing_them_to_the_session
     )
     monkeypatch.setattr(client_mod, "ElastiCacheIntegrationsHandle", lambda *a, **k: MagicMock())
 
-    overrides = {"exclude_tables": ["t"]}
+    overrides = {"cached_tables": ["t"]}
     configuration = ElastiCacheIntegrationsClientConfiguration(cache_policy_overrides=overrides)
     client_mod.client(
         "dynamodb", endpoint="cache:6379", cache_name="c", client_configuration=configuration
     )
-    overrides["exclude_tables"].append("other")
+    overrides["cached_tables"].append("other")
 
-    assert built["overrides"] == {"exclude_tables": ["t"]}
+    assert built["overrides"] == {"cached_tables": ["t"]}
     assert built["overrides"] is not overrides
-    assert built["overrides"]["exclude_tables"] is not overrides["exclude_tables"]
+    assert built["overrides"]["cached_tables"] is not overrides["cached_tables"]

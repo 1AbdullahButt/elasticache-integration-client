@@ -42,11 +42,14 @@ _CRLF = b"\r\n"
 # The resolved config the real proxy returns for empty overrides — see
 # ElastiCacheProxyRust/src/libproxy/elasticache_integrations/config.rs::resolve. One CEL predicate caching every
 # supported read regardless of table; `version` is the predicate *format* version ("1.0", constant).
+#
+# Routing only: the reply carries version, refresh_interval and predicates and no lifetime.
+# The proxy applies the TTLs itself and echoes none of them, which is why an out-of-range
+# lifetime is refused at the handshake rather than quietly adjusted — a clamp would be
+# invisible here.
 DEFAULT_RESOLVED_CONFIG = {
     "version": "1.0",
     "refresh_interval": 60,
-    "ttl": 300,
-    "nttl": 60,
     "predicates": [
         {
             "expr": "service == 'dynamodb' && operation in ops",
@@ -70,15 +73,14 @@ DEFAULT_RESOLVED_CONFIG = {
 
 
 def table_allowlist_config(*tables: str) -> dict:
-    """A resolved config restricting caching to ``tables`` — the two CEL predicates the proxy emits
-    for a ``tables`` override (single-table reads on ``body.TableName``, ``BatchGetItem`` on the keys
-    of ``body.RequestItems``)."""
+    """A resolved config restricting caching to ``tables`` — the three CEL predicates the proxy
+    emits for a ``cached_tables`` allowlist, one per body shape: single-table operations on
+    ``body.TableName``, the batch ones on the keys of ``body.RequestItems``, and the
+    transactional ones nested under ``body.TransactItems``."""
     allowed = sorted(tables)
     return {
         "version": "1.0",
         "refresh_interval": 60,
-        "ttl": 300,
-        "nttl": 60,
         "predicates": [
             {
                 "expr": "service == 'dynamodb' && operation in ops "

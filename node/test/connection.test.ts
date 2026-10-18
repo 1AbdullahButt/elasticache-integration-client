@@ -426,7 +426,7 @@ describe("ElastiCacheIntegrationsConnector", () => {
 
     await connector.connect();
     await expect(connector.execute("aws.config", Buffer.from("{}"))).resolves.toEqual(
-      Buffer.from(JSON.stringify({ version: "v1", refresh_interval: 60, predicates: [] })),
+      Buffer.from(JSON.stringify({ version: "1.0", refresh_interval: 60, predicates: [] })),
     );
     await expect(
       connector.execute(
