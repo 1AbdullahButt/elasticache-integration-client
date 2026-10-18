@@ -6,13 +6,15 @@
 - Keep changes within the relevant client directory unless the change affects
   shared documentation or CI.
 - Read the package-specific `AGENTS.md` and `README.md` before editing code in
-  `node/` or `java/`.
+  `node/`, `java/` or `dotnet/`.
 
 ## Repository map
 
 - `node/`: TypeScript/Node.js ElastiCache Integrations client.
 - `java/`: Java/AWS SDK v2 ElastiCache Integrations client.
 - `python/`: Python/boto3 ElastiCache Integrations client.
+- `dotnet/`: C#/AWS SDK for .NET v4 client (preview). It does not run the
+  `shared/` fixtures yet.
 - `shared/`: language-neutral client contracts. `idempotent-operations.json`
   is packaged into each client. `protocol-vectors.json` and
   `sdk-request-cases.json` are test fixtures that every client's tests run and
@@ -43,6 +45,9 @@ Run commands from the client directory they apply to:
 - Java: use focused Gradle tests when appropriate and `./gradlew build` for the
   complete local gate. Gradle must run on JDK 21. Use `./gradlew spotlessApply`
   to fix formatting.
+- .NET: use `dotnet format --verify-no-changes`, `dotnet build -warnaserror`
+  and `dotnet test` for the complete local gate, and `scripts/pack-smoke.sh`
+  when changing package metadata, the public API or published contents.
 - Python: use focused pytest tests when appropriate and `python -m pytest` for
   the complete local gate.
 - Before reporting completion, state which validation commands actually ran and

@@ -45,6 +45,15 @@ Local test runs include both sets of tests. CI runs them in a separate
 so `CI / alignment / <client>` reports drift from the shared fixtures on its
 own.
 
+## .NET client (preview)
+
+`dotnet/` holds a C# client for the AWS SDK for .NET v4 (`net8.0`, also tested
+on the .NET 10 runtime). It still uses the `Amazon.Photon` package and type
+names, does not yet run the `shared/` fixtures or package
+`shared/idempotent-operations.json`, and has its own
+`.github/workflows/dotnet-ci.yml`. These are being aligned with the other
+clients.
+
 ## Repository layout
 
 ```text
@@ -52,5 +61,6 @@ own.
 ├── node/    # Node.js client
 ├── java/    # Java client
 ├── python/  # Python client
+├── dotnet/  # .NET (C#) client (preview)
 └── shared/  # Language-neutral client contracts
 ```
