@@ -180,6 +180,11 @@ class PredicateEvaluatorTest {
         assertFalse(
                 evaluator.shouldRouteToCache(
                         request("TransactGetItems", "dynamodb", "{\"TransactItems\":[]}")));
+        // The "TableName" guard: an action carrying no table is a clean non-match, not an error.
+        assertFalse(
+                evaluator.shouldRouteToCache(
+                        request(
+                                "TransactGetItems", "dynamodb", "{\"TransactItems\":[{\"Get\":{\"Key\":{}}}]}")));
     }
 
     @Test
@@ -283,8 +288,8 @@ class PredicateEvaluatorTest {
                         "service == 'dynamodb' && operation in ops "
                                 + "&& has(body.TransactItems) && size(body.TransactItems) > 0 "
                                 // Each transaction item is a map keyed by its operation.
-                                + "&& body.TransactItems.all(i, "
-                                + "i.all(k, i[k].TableName in allowed))",
+                                + "&& body.TransactItems.all(i, i.all(k, "
+                                + "\"TableName\" in i[k] && i[k].TableName in allowed))",
                         vars("ops", transactionOperations, "allowed", allowed)));
     }
 

@@ -63,7 +63,7 @@ function tableAllowlistEvaluator(...allowed: string[]): PredicateEvaluator {
     predicate(
       "service == 'dynamodb' && operation in ops " +
         "&& has(body.TransactItems) && size(body.TransactItems) > 0 " +
-        "&& body.TransactItems.all(i, i.all(k, i[k].TableName in allowed))",
+        '&& body.TransactItems.all(i, i.all(k, "TableName" in i[k] && i[k].TableName in allowed))',
       { ops: ["TransactGetItems", "TransactWriteItems"], allowed },
     ),
   );
@@ -116,6 +116,12 @@ describe("PredicateEvaluator", () => {
     expect(predicates.shouldRouteToCache(request("TransactGetItems", '{"TransactItems":[]}'))).toBe(
       false,
     );
+    // The "TableName" guard: an action carrying no table is a clean non-match, not a throw.
+    expect(
+      predicates.shouldRouteToCache(
+        request("TransactGetItems", '{"TransactItems":[{"Get":{"Key":{}}}]}'),
+      ),
+    ).toBe(false);
   });
 
   it("compiles a missing predicates field to no predicates", () => {

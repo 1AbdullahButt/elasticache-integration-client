@@ -97,7 +97,8 @@ def table_allowlist_config(*tables: str) -> dict:
             {
                 "expr": "service == 'dynamodb' && operation in ops "
                 "&& has(body.TransactItems) && size(body.TransactItems) > 0 "
-                "&& body.TransactItems.all(i, i.all(k, i[k].TableName in allowed))",
+                '&& body.TransactItems.all(i, i.all(k, "TableName" in i[k] '
+                "&& i[k].TableName in allowed))",
                 "vars": {"ops": ["TransactGetItems", "TransactWriteItems"], "allowed": allowed},
             },
         ],
