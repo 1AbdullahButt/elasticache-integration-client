@@ -78,15 +78,15 @@
         "method": "POST",
         "url": "https://example.com/",
         "headers": {
-          "X-Name": "caf\u00e9"
+          "X-Name": "café"
         },
-        "body": "{\"k\":\"\u00e9\"}",
+        "body": "{\"k\":\"é\"}",
         "metadata": {
           "service": "dynamodb",
           "operation": "PutItem"
         }
       },
-      "frame": "*6\r\n$11\r\naws.request\r\n$4\r\nPOST\r\n$20\r\nhttps://example.com/\r\n$12\r\nx-name:caf\u00e9\r\n$10\r\n{\"k\":\"\u00e9\"}\r\n$27\r\nservice=dynamodb&op=PutItem\r\n"
+      "frame": "*6\r\n$11\r\naws.request\r\n$4\r\nPOST\r\n$20\r\nhttps://example.com/\r\n$12\r\nx-name:café\r\n$10\r\n{\"k\":\"é\"}\r\n$27\r\nservice=dynamodb&op=PutItem\r\n"
     },
     {
       "name": "request_duplicate_header_names_after_lowercasing",
@@ -133,7 +133,7 @@
     {
       "name": "config_non_ascii_escaped",
       "overrides": {
-        "name": "caf\u00e9"
+        "name": "café"
       },
       "frame": "*2\r\n$10\r\naws.config\r\n$36\r\n{\"version\":\"1.0\",\"name\":\"caf\\u00e9\"}\r\n"
     }
