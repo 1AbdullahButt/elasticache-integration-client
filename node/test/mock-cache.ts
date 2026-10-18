@@ -202,7 +202,7 @@ export class MockCache {
   constructor(options: MockCacheOptions = {}) {
     // Callers usually override only `predicates`; the rest of a valid config
     // (notably the required `refresh_interval`) is filled in here.
-    this.config = { version: "v1", refresh_interval: 60, predicates: [], ...options.config };
+    this.config = { version: "1.0", refresh_interval: 60, predicates: [], ...options.config };
     this.tls = options.tls ?? false;
     this.helloResponse = options.helloResponse;
     this.authResponse = options.authResponse;

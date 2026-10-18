@@ -69,12 +69,19 @@ def test_serialize_config_none_sends_no_argument_form():
 
 def test_parse_config_response_json_bulk_string():
     """Parses a JSON bulk-string config reply into a ResolvedConfig."""
-    cfg = parse_config_response(b'{"version":"v3","refresh_interval":60,"ttl":300,"predicates":[]}')
+    cfg = parse_config_response(
+        b'{"version":"1.0","refresh_interval":60,"a_field_this_client_does_not_model":1,"predicates":[]}'
+    )
     assert isinstance(cfg, ResolvedConfig)
-    assert cfg.version == "v3"
+    assert cfg.version == "1.0"
     assert cfg.refresh_interval == 60
     # Unmodeled fields survive on .raw so nothing from the server is silently dropped.
-    assert cfg.raw == {"version": "v3", "refresh_interval": 60, "ttl": 300, "predicates": []}
+    assert cfg.raw == {
+        "version": "1.0",
+        "refresh_interval": 60,
+        "a_field_this_client_does_not_model": 1,
+        "predicates": [],
+    }
 
 
 def test_parse_config_response_missing_version_defaults_to_none():
@@ -128,7 +135,7 @@ def test_parse_config_response_config_invalid_raises_typed_error():
 def test_parse_config_response_rejects_array():
     """A RESP array shape for config is intentionally unsupported."""
     with pytest.raises(ElastiCacheIntegrationsError):
-        parse_config_response([b"version", b"v3"])  # RESP-array shape NOT supported
+        parse_config_response([b"version", b"1.0"])  # RESP-array shape NOT supported
 
 
 def test_parse_config_response_rejects_malformed_json():

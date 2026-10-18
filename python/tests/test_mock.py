@@ -68,9 +68,9 @@ def test_config_with_invalid_overrides_is_rejected():
 def test_config_overrides_are_recorded():
     """Each aws.config's decoded overrides are recorded, in order, for assertions."""
     cache = MockCache()
-    cache.handle([b"aws.config", b'{"ttl": 300}'])
+    cache.handle([b"aws.config", b'{"item_ttl": 300}'])
     cache.handle([b"aws.config", b"{}"])
-    assert cache.config_overrides == [{"ttl": 300}, {}]
+    assert cache.config_overrides == [{"item_ttl": 300}, {}]
 
 
 def test_request_with_wrong_arg_count_is_rejected():

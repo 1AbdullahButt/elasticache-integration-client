@@ -531,9 +531,11 @@ class ElastiCacheIntegrationsProtocolTest {
     @Test
     void serializeConfig_addsTheProtocolVersionToCallerOverrides() {
         SerializedCommand cmd =
-                ElastiCacheIntegrationsProtocol.serializeConfig(Collections.singletonMap("ttl", 300));
+                ElastiCacheIntegrationsProtocol.serializeConfig(Collections.singletonMap("item_ttl", 300));
         assertEquals(
-                "{\"version\":\"" + ElastiCacheIntegrationsProtocol.PROTOCOL_VERSION + "\",\"ttl\":300}",
+                "{\"version\":\""
+                        + ElastiCacheIntegrationsProtocol.PROTOCOL_VERSION
+                        + "\",\"item_ttl\":300}",
                 new String(cmd.getArgs().get(0), StandardCharsets.UTF_8));
     }
 
@@ -549,8 +551,8 @@ class ElastiCacheIntegrationsProtocolTest {
     @Test
     void serializeConfig_doesNotMutateTheCallerMap() {
         Map<String, Object> overrides = new LinkedHashMap<>();
-        overrides.put("ttl", 300);
+        overrides.put("item_ttl", 300);
         ElastiCacheIntegrationsProtocol.serializeConfig(overrides);
-        assertEquals(Collections.singletonMap("ttl", 300), overrides);
+        assertEquals(Collections.singletonMap("item_ttl", 300), overrides);
     }
 }

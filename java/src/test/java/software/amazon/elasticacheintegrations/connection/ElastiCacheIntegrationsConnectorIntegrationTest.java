@@ -171,7 +171,7 @@ class ElastiCacheIntegrationsConnectorIntegrationTest {
                 new ElastiCacheIntegrationsConnector("localhost", server.getPort(), clientSslContext);
         try {
             Map<String, Object> overrides = new HashMap<>();
-            overrides.put("refresh_interval", 120);
+            overrides.put("item_ttl", 120);
             ResolvedConfig config = conn.connectAndAuthenticate(TEST_USER, TEST_TOKEN, overrides);
             assertNotNull(config);
         } finally {

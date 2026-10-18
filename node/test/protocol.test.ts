@@ -59,17 +59,22 @@ describe("ElastiCacheIntegrations protocol", () => {
   });
 
   it("parses a JSON config bulk string and preserves the wire object", () => {
+    // The reply carries routing only — version, refresh_interval, predicates — so the
+    // extra field here stands for one a later server adds, not a lifetime: no setting
+    // is ever echoed back.
     const config = parseConfigResponse(
-      Buffer.from('{"version":"v3","refresh_interval":60,"ttl":300,"predicates":[]}'),
+      Buffer.from(
+        '{"version":"1.0","refresh_interval":60,"a_field_this_client_does_not_model":1,"predicates":[]}',
+      ),
     );
 
     expect(config).toBeInstanceOf(ResolvedConfig);
-    expect(config.version).toBe("v3");
+    expect(config.version).toBe("1.0");
     expect(config.refreshInterval).toBe(60);
     expect(config.raw).toEqual({
-      version: "v3",
+      version: "1.0",
       refresh_interval: 60,
-      ttl: 300,
+      a_field_this_client_does_not_model: 1,
       predicates: [],
     });
   });
@@ -139,7 +144,7 @@ describe("ElastiCacheIntegrations protocol", () => {
     // A RespError config reply must be rejected, not parsed.
     new RespError("ERR", "nope"),
     // A RESP array shape for config is intentionally unsupported.
-    [Buffer.from("version"), Buffer.from("v3")],
+    [Buffer.from("version"), Buffer.from("1.0")],
     // A non-JSON bulk string must be rejected.
     Buffer.from("not json"),
     // Valid JSON that is not an object (for example, an array) must be rejected.

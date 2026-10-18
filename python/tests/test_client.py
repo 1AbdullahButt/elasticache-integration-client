@@ -338,7 +338,7 @@ def test_client_passes_cache_policy_overrides_to_the_session(monkeypatch):
     )
     monkeypatch.setattr(client_mod, "ElastiCacheIntegrationsHandle", lambda *a, **k: MagicMock())
 
-    overrides = {"tables": ["t"]}
+    overrides = {"cached_tables": ["t"]}
     _call(
         _sdk_client(),
         client_configuration=ElastiCacheIntegrationsClientConfiguration(
@@ -357,18 +357,18 @@ def test_client_copies_cache_policy_overrides_before_passing_them_to_the_session
     )
     monkeypatch.setattr(client_mod, "ElastiCacheIntegrationsHandle", lambda *a, **k: MagicMock())
 
-    overrides = {"tables": ["t"]}
+    overrides = {"cached_tables": ["t"]}
     _call(
         _sdk_client(),
         client_configuration=ElastiCacheIntegrationsClientConfiguration(
             cache_policy_overrides=overrides
         ),
     )
-    overrides["tables"].append("other")
+    overrides["cached_tables"].append("other")
 
-    assert built["overrides"] == {"tables": ["t"]}
+    assert built["overrides"] == {"cached_tables": ["t"]}
     assert built["overrides"] is not overrides
-    assert built["overrides"]["tables"] is not overrides["tables"]
+    assert built["overrides"]["cached_tables"] is not overrides["cached_tables"]
 
 
 class TestClientCredentialsContract:
