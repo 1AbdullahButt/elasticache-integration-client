@@ -533,7 +533,7 @@ class ElastiCacheIntegrationsProtocolTest {
         SerializedCommand cmd =
                 ElastiCacheIntegrationsProtocol.serializeConfig(Collections.singletonMap("item_ttl", 300));
         assertEquals(
-                "{\"version\":\"" + ElastiCacheIntegrationsProtocol.PROTOCOL_VERSION + "\",\"ttl\":300}",
+                "{\"version\":\"" + ElastiCacheIntegrationsProtocol.PROTOCOL_VERSION + "\",\"item_ttl\":300}",
                 new String(cmd.getArgs().get(0), StandardCharsets.UTF_8));
     }
 
