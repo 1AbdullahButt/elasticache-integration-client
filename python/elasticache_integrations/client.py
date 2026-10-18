@@ -34,8 +34,11 @@ class ElastiCacheIntegrationsClientConfiguration:
             negative value means indefinitely, so a cache outage never becomes an application
             outage. ``0`` means never — the first request after a connection is lost raises
             :class:`~elasticache_integrations.exceptions.ElastiCacheIntegrationsCacheUnavailable`.
-        cache_policy_overrides: Optional settings that change what ElastiCacheIntegrations caches, such as tables to
-            exclude and cache entry lifetimes. Sent through the internal ``aws.config`` command.
+        cache_policy_overrides: Optional settings that change what ElastiCacheIntegrations caches:
+            which tables and operations to cache, and the cache entry lifetimes. ``cached_tables``
+            and ``cached_operations`` are allowlists — each empty or absent means everything, so
+            keeping a table out of the cache means naming the tables that should be cached rather
+            than naming the one that should not. Sent through the internal ``aws.config`` command.
         cache_policy_timeout: How long, in seconds, ElastiCacheIntegrations may use a cache policy without
             confirmation from the cache. After this time, ElastiCacheIntegrations reconnects to get a current policy.
             Defaults to 3600 seconds and must be a positive whole number.
@@ -160,7 +163,7 @@ def install(
                 client_configuration=ElastiCacheIntegrationsClientConfiguration(
                     cache_request_timeout=2.0,
                     fallback_duration=60,
-                    cache_policy_overrides={"tables": ["Users", "Sessions"]},
+                    cache_policy_overrides={"cached_tables": ["Users", "Sessions"]},
                 ),
             )
     """

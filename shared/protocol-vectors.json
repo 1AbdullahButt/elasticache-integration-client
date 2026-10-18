@@ -118,9 +118,9 @@
     {
       "name": "config_overrides",
       "overrides": {
-        "ttl": 60,
+        "item_ttl": 60,
         "enabled": true,
-        "tables": [
+        "cached_tables": [
           "a",
           "b"
         ],
@@ -128,7 +128,7 @@
           "k": "v"
         }
       },
-      "frame": "*2\r\n$10\r\naws.config\r\n$79\r\n{\"version\":\"1.0\",\"ttl\":60,\"enabled\":true,\"tables\":[\"a\",\"b\"],\"nested\":{\"k\":\"v\"}}\r\n"
+      "frame": "*2\r\n$10\r\naws.config\r\n$91\r\n{\"version\":\"1.0\",\"item_ttl\":60,\"enabled\":true,\"cached_tables\":[\"a\",\"b\"],\"nested\":{\"k\":\"v\"}}\r\n"
     },
     {
       "name": "config_non_ascii_escaped",
@@ -214,12 +214,12 @@
     {
       "name": "config_ok",
       "command": "aws.config",
-      "reply": "$44\r\n{\"version\":\"v1\",\"refresh_interval\":60,\"x\":1}\r\n",
+      "reply": "$45\r\n{\"version\":\"1.0\",\"refresh_interval\":60,\"x\":1}\r\n",
       "config": {
-        "version": "v1",
+        "version": "1.0",
         "refresh_interval": 60,
         "raw": {
-          "version": "v1",
+          "version": "1.0",
           "refresh_interval": 60,
           "x": 1
         }
@@ -277,7 +277,7 @@
     {
       "name": "config_missing_refresh_interval",
       "command": "aws.config",
-      "reply": "$16\r\n{\"version\":\"v1\"}\r\n",
+      "reply": "$17\r\n{\"version\":\"1.0\"}\r\n",
       "error": "error"
     },
     {

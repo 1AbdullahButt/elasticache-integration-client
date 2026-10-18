@@ -35,7 +35,7 @@ describe("MockCache contract", () => {
      * With noArgConfigReply set, a no-argument aws.config replies with it instead of null,
      * simulating the cache changing its own settings independently of the client.
      */
-    const changed = { version: "v1", refresh_interval: 30, predicates: [] };
+    const changed = { version: "1.0", refresh_interval: 30, predicates: [] };
     const cache = new MockCache({ noArgConfigReply: changed });
 
     const [value] = decodeResp(cache.handle([Buffer.from("aws.config")]));

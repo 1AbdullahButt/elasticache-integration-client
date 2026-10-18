@@ -359,7 +359,7 @@ class ElastiCacheIntegrationsClientTest {
                 ElastiCacheIntegrationsClient.builder()
                         .endpoint("localhost:" + server.getPort())
                         .authCredentials(TEST_USER, TEST_TOKEN)
-                        .overrides(Collections.singletonMap("ttl", 300))
+                        .overrides(Collections.singletonMap("item_ttl", 300))
                         .sslContext(clientSslContext)
                         .origin(DynamoDbClient.builder(), sdkConfig)
                         .build()) {

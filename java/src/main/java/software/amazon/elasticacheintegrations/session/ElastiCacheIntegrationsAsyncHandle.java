@@ -182,6 +182,18 @@ public final class ElastiCacheIntegrationsAsyncHandle implements Closeable {
             return this;
         }
 
+        /**
+         * Set the cache policy overrides sent in the {@code aws.config} handshake (optional).
+         *
+         * <p>{@code cached_tables} and {@code cached_operations} are allowlists — each empty or absent
+         * means everything — so keeping a table out of the cache means naming the tables that should be
+         * cached rather than the one that should not. The lifetimes ({@code item_ttl}, {@code
+         * item_negative_ttl}, {@code query_ttl}, {@code scan_ttl}) and {@code item_write_behavior}
+         * apply connection-wide, or per table under {@code table_overrides}.
+         *
+         * <p>The map is sent as given. A field name the proxy does not recognise is ignored, so a typo
+         * or a stale key is dropped without an error.
+         */
         public Builder overrides(Map<String, Object> overrides) {
             this.overrides = overrides;
             return this;
