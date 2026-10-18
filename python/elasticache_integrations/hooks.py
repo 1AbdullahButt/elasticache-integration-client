@@ -56,6 +56,9 @@ _BEFORE_SEND = "before-send"
 
 _UNIQUE_ID = "elasticache_integrations"
 
+#: Marks a client that already has a handle, so a second install can be refused.
+_HANDLE_ATTRIBUTE = "_elasticache_integrations_handle"
+
 logger = logging.getLogger(__name__)
 
 _ORIGIN_ERROR = "ORIGIN_ERROR"
@@ -144,6 +147,11 @@ def _cache_to_aws_response(url: str, response: ElastiCacheIntegrationsResponse) 
     )
 
 
+def installed_handle(sdk_client: BaseClient) -> "ElastiCacheIntegrationsHandle | None":
+    """Return the handle already attached to ``sdk_client``, or None if there is none."""
+    return getattr(sdk_client, _HANDLE_ATTRIBUTE, None)
+
+
 class ElastiCacheIntegrationsHandle:
     """Attaches ElastiCacheIntegrations to a boto3 client for the lifetime of the client."""
 
@@ -155,6 +163,7 @@ class ElastiCacheIntegrationsHandle:
         sdk_client.close = (
             self._close
         )  # override so closing the client also tears ElastiCacheIntegrations down
+        setattr(sdk_client, _HANDLE_ATTRIBUTE, self)
 
     def _close(self) -> None:
         """Replaces sdk_client.close: detach ElastiCacheIntegrations, close the session, then the client itself.
@@ -163,9 +172,19 @@ class ElastiCacheIntegrationsHandle:
         unregistered here; otherwise it keeps firing (and warning) on a client
         used after close.
         """
-        self._sdk_client.meta.events.unregister(_BEFORE_SEND, unique_id=_UNIQUE_ID)
-        self._session.close()
-        self._sdk_close()
+        try:
+            self._sdk_client.meta.events.unregister(_BEFORE_SEND, unique_id=_UNIQUE_ID)
+            # Cleared so the client counts as uninstalled again.
+            try:
+                delattr(self._sdk_client, _HANDLE_ATTRIBUTE)
+            except AttributeError:
+                pass
+            self._session.close()
+        finally:
+            # Put boto3's own close back, so a later install does not save this one as "the
+            # original" and stack another layer onto every subsequent close.
+            self._sdk_client.close = self._sdk_close
+            self._sdk_close()
 
     def _handle(self, request: AWSPreparedRequest, **kwargs) -> AWSResponse | None:
         """The before-send handler: serve the request from ElastiCacheIntegrations, or pass it through.
