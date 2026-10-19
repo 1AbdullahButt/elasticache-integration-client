@@ -48,8 +48,8 @@ own.
 ## .NET client (preview)
 
 `dotnet/` holds a C# client for the AWS SDK for .NET v4 (`net8.0`, also tested
-on the .NET 10 runtime). It still uses the `Amazon.Photon` package and type
-names, does not yet run the `shared/` fixtures or package
+on the .NET 10 runtime), published as the `Amazon.ElastiCache.Integrations`
+NuGet package. It does not yet run the `shared/` fixtures or package
 `shared/idempotent-operations.json`, and has its own
 `.github/workflows/dotnet-ci.yml`. These are being aligned with the other
 clients.
