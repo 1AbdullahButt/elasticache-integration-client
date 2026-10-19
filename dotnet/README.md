@@ -84,7 +84,7 @@ The body is parsed only for a predicate that names `body`, such as a table filte
 filter, the default predicate reads `service` and `operation` only, and the body is never parsed.
 A body that cannot be read as a JSON object (malformed, not UTF-8, too deep) is no match for a
 predicate that reads it. A predicate that does not read it can still route the call; the cache then rejects it with
-`PARSE_ERROR`, and the call goes to DynamoDB, or fails in strict mode.
+`PARSE_ERROR`, and the call fails with `ElastiCacheIntegrationsServerException`.
 
 The client uses a config only when it can use all of it: format `1.x`, a `predicates` array, and
 every entry an object with a string `expr`, an object `vars` if any, and an expression that
@@ -116,7 +116,7 @@ A DynamoDB error in a cached or proxied reply, such as `ResourceNotFoundExceptio
 | `TlsServerName` | the endpoint host | The name for SNI and the certificate check, for tunnels and IP endpoints. |
 | `CaCertificates` | the system store | Trusted roots that replace the system store. Copied when the client opens. |
 | `InsecureSkipVerify` | `false` | Keep TLS but skip the certificate check. Local and test endpoints only. Wins over `CaCertificates` and logs a warning (event 1001). |
-| `FallbackDuration` | infinite | How long calls go to DynamoDB while the cache is down. `TimeSpan.Zero` is strict mode. See [Reconnect and fallback](#reconnect-and-fallback). |
+| `FallbackDuration` | infinite | How long calls go to DynamoDB while the cache is down. `TimeSpan.Zero` turns fallback off. See [Reconnect and fallback](#reconnect-and-fallback). |
 | `Reconnect` | see below | Connect retries and backoff. |
 | `MaxPending` | `100` | Calls in flight on the connection. A call over the limit is not sent and fails with a retryable error, so the SDK retries it (event 1308, once per burst). |
 | `MaxResponseSize` | 16 MiB | The largest reply accepted. A larger one closes the connection. |
@@ -234,15 +234,31 @@ A call that finds no connection:
 3. Once the window is spent, fails with `ElastiCacheIntegrationsCacheUnavailableException` until the cache is back
    (event 1305, once per outage).
 
-`FallbackDuration = TimeSpan.Zero` is strict mode: while the client is open, a call never falls
-back. It fails with `ElastiCacheIntegrationsCacheUnavailableException` when there is no connection or the cache
-answers `-AUTH_ERROR`, and with `ElastiCacheIntegrationsServerException` when the cache refuses it
-(`PARSE_ERROR`, `UNSUPPORTED`, `UNIMPLEMENTED`, `REGION_MISMATCH`, `CONFIG_INVALID`).
+`FallbackDuration = TimeSpan.Zero` turns fallback off: while the client is open, a call with no
+connection fails with `ElastiCacheIntegrationsCacheUnavailableException` and never goes to DynamoDB.
 
 A call already sent on a connection that then fails is never replayed to DynamoDB by the client,
-because the cache may have run it. It is returned to the SDK as an `HttpRequestException`, so the
-SDK's retry policy decides, and the retry re-enters the client. This covers a reply timeout
-(`RequestTimeout`), a lost connection and a corrupt reply.
+because the cache may have run it. This covers a reply timeout (`RequestTimeout`), a lost
+connection and a corrupt reply. What happens next depends on the operation, using the shared
+catalog `../shared/idempotent-operations.json`, which is embedded in the package:
+
+- A listed operation (`GetItem`, `Query`, `Scan`, `BatchGetItem`, `TransactGetItems`, the
+  `Describe*` and `List*` calls) is returned to the SDK as an `HttpRequestException`, so the SDK's
+  retry policy decides. The retry enters the client again: it waits for the reconnect, and goes to
+  DynamoDB only inside the fallback window.
+- Any other operation, such as `PutItem` or `TransactWriteItems`, fails with the client error
+  (`ElastiCacheIntegrationsTimeoutException`, `ElastiCacheIntegrationsConnectionLostException` or
+  `ElastiCacheIntegrationsProtocolException`). The SDK does not retry it.
+
+The cache's error replies follow the same contract as the other clients:
+
+- `ORIGIN_ERROR`: retryable as above for a listed operation while its connection is open, else it
+  fails.
+- `MOVED` and `NOAUTH`: the cache did not run the call, so it is retryable for any operation (see
+  below).
+- Every other code (`PARSE_ERROR`, `UNSUPPORTED`, `UNIMPLEMENTED`, `REGION_MISMATCH`,
+  `CONFIG_INVALID`, `INTERNAL_ERROR`, any unknown code) fails with
+  `ElastiCacheIntegrationsServerException`. It is not retried and does not go to DynamoDB.
 
 A reply timeout fails only that call; the connection stays open. Replies arrive in order, so a
 connection whose oldest in-band reply is missing for 10 s is treated as stuck: it is closed (event
@@ -252,9 +268,8 @@ or more, an in-band reply timeout closes the connection at once.
 
 A `MOVED` reply closes the connection and starts the reconnect. If it came in place of the reply,
 the cache did not run the call, so the call is sent once more the way a call with no connection
-goes. If it came after the cache accepted the call with a request id, the call fails with
-`HttpRequestException` wrapping `ElastiCacheIntegrationsConnectionLostException`, and the SDK's retry policy
-decides. `NOAUTH` always counts as not run: the engine refuses the command before the cache
+goes. If it came after the cache accepted the call with a request id, the call may have run, so
+it fails like a lost connection: retried by the SDK only for a listed operation. `NOAUTH` always counts as not run: the engine refuses the command before the cache
 sees it.
 
 Replies may arrive out of order: the cache can answer with a request id and send the result
@@ -290,9 +305,10 @@ From a call:
 | Exception | When |
 |-----------|------|
 | The modeled SDK exception, for example `ResourceNotFoundException` | DynamoDB returned that error, through the cache or directly. |
-| `HttpRequestException` | A call the SDK may retry failed in the client and the SDK's retries ran out. `InnerException` is the client error: `ElastiCacheIntegrationsTimeoutException`, `ElastiCacheIntegrationsConnectionLostException`, `ElastiCacheIntegrationsProtocolException`, `ElastiCacheIntegrationsPendingLimitException` (`MaxPending` calls were already in flight; this one was not sent), or a `ElastiCacheIntegrationsServerException` such as `ORIGIN_ERROR` or `INTERNAL_ERROR`. |
-| `ElastiCacheIntegrationsCacheUnavailableException` | No cache connection, or `-AUTH_ERROR`, and the fallback window is spent or strict mode is on. Not retried by the SDK. |
-| `ElastiCacheIntegrationsServerException` | Strict mode only: the cache rejected the call (`PARSE_ERROR`, `UNSUPPORTED`, `UNIMPLEMENTED`, `REGION_MISMATCH`, `CONFIG_INVALID`). Outside strict mode these calls go to DynamoDB. `Code` holds the code. |
+| `HttpRequestException` | A call the SDK may retry failed in the client and the SDK's retries ran out. `InnerException` is the client error: `ElastiCacheIntegrationsTimeoutException`, `ElastiCacheIntegrationsConnectionLostException`, `ElastiCacheIntegrationsProtocolException`, `ElastiCacheIntegrationsPendingLimitException` (`MaxPending` calls were already in flight; this one was not sent), or an `ElastiCacheIntegrationsServerException` with `ORIGIN_ERROR`, `MOVED` or `NOAUTH`. After a timeout, a lost connection, a corrupt reply or `ORIGIN_ERROR`, only a listed operation is retried. |
+| `ElastiCacheIntegrationsCacheUnavailableException` | No cache connection, or `-AUTH_ERROR`, and the fallback window is spent or `FallbackDuration` is zero. Not retried by the SDK. |
+| `ElastiCacheIntegrationsServerException` | The cache rejected the call (`PARSE_ERROR`, `UNSUPPORTED`, `INTERNAL_ERROR`, ...), or `ORIGIN_ERROR` for an operation that is not listed. Not retried, never sent to DynamoDB. `Code` holds the code. |
+| `ElastiCacheIntegrationsTimeoutException`, `ElastiCacheIntegrationsConnectionLostException`, `ElastiCacheIntegrationsProtocolException` | A call that is not listed in the catalog may have run in the cache, then its reply timed out, the connection was lost or the reply was corrupt. Not retried. |
 | `TimeoutException` | The SDK's own `HttpClient` timeout fired while the call waited on the cache, as for a slow DynamoDB call. |
 | `OperationCanceledException` | The caller cancelled. |
 | `ObjectDisposedException` | The client was closed before or during the call. |

@@ -9,14 +9,14 @@ namespace Amazon.ElastiCache.Integrations;
 /// <summary>What a <c>-CODE message</c> reply means for the request that got it.</summary>
 internal enum ServerErrorKind
 {
-    /// <summary>Refused before any origin call, and the same on every retry.</summary>
-    Deterministic,
+    /// <summary>The cache refused the call; it fails and is not retried.</summary>
+    Rejected,
+
+    /// <summary>DynamoDB failed the call; retryable for a listed operation only.</summary>
+    Origin,
 
     /// <summary>The connection holds no FAS to sign the origin call with; re-authenticate.</summary>
     Auth,
-
-    /// <summary>A fault that may clear on retry.</summary>
-    Retryable,
 
     /// <summary>The connection can no longer serve requests; drop it and reconnect.</summary>
     ConnectionDrop,
@@ -36,13 +36,13 @@ internal static class ServerErrors
     public const string Moved = "MOVED";
     public const string NoAuth = "NOAUTH";
 
-    /// <summary>Codes are case-sensitive; an unknown code is <see cref="ServerErrorKind.Retryable"/>.</summary>
+    /// <summary>Codes are case-sensitive; an unknown code is <see cref="ServerErrorKind.Rejected"/>.</summary>
     public static ServerErrorKind Classify(string code) => code switch
     {
-        ParseError or Unsupported or Unimplemented or RegionMismatch or ConfigInvalid => ServerErrorKind.Deterministic,
+        OriginError => ServerErrorKind.Origin,
         AuthError => ServerErrorKind.Auth,
         Moved or NoAuth => ServerErrorKind.ConnectionDrop,
-        _ => ServerErrorKind.Retryable,
+        _ => ServerErrorKind.Rejected,
     };
 
     /// <summary>A reply with no usable code, such as <c>-\r\n</c>, gets the code <c>ERR</c>.</summary>

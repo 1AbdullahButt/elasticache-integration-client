@@ -3,21 +3,21 @@ namespace Amazon.ElastiCache.Integrations.Tests;
 public class ServerErrorsTests
 {
     [Theory]
-    [InlineData("PARSE_ERROR", "Deterministic")]
-    [InlineData("UNSUPPORTED", "Deterministic")]
-    [InlineData("UNIMPLEMENTED", "Deterministic")]
-    [InlineData("REGION_MISMATCH", "Deterministic")]
-    [InlineData("CONFIG_INVALID", "Deterministic")]
+    [InlineData("PARSE_ERROR", "Rejected")]
+    [InlineData("UNSUPPORTED", "Rejected")]
+    [InlineData("UNIMPLEMENTED", "Rejected")]
+    [InlineData("REGION_MISMATCH", "Rejected")]
+    [InlineData("CONFIG_INVALID", "Rejected")]
     [InlineData("AUTH_ERROR", "Auth")]
     [InlineData("MOVED", "ConnectionDrop")]
     [InlineData("NOAUTH", "ConnectionDrop")]
-    [InlineData("ORIGIN_ERROR", "Retryable")]
-    [InlineData("INTERNAL_ERROR", "Retryable")]
-    [InlineData("ERR", "Retryable")]
-    [InlineData("CLUSTERDOWN", "Retryable")]
-    [InlineData("ELASTICACHE_INTEGRATIONS_AUTH_ERROR", "Retryable")]
-    [InlineData("unsupported", "Retryable")]
-    [InlineData("", "Retryable")]
+    [InlineData("ORIGIN_ERROR", "Origin")]
+    [InlineData("INTERNAL_ERROR", "Rejected")]
+    [InlineData("ERR", "Rejected")]
+    [InlineData("CLUSTERDOWN", "Rejected")]
+    [InlineData("ELASTICACHE_INTEGRATIONS_AUTH_ERROR", "Rejected")]
+    [InlineData("unsupported", "Rejected")]
+    [InlineData("", "Rejected")]
     public void ClassifiesEveryCode(string code, string kind)
     {
         Assert.Equal(Enum.Parse<ServerErrorKind>(kind), ServerErrors.Classify(code));

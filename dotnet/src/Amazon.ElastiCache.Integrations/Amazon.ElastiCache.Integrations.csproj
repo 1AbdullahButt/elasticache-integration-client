@@ -25,6 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../../../shared/idempotent-operations.json" LogicalName="Amazon.ElastiCache.Integrations.idempotent-operations.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Amazon.ElastiCache.Integrations.Tests" />
     <InternalsVisibleTo Include="Amazon.ElastiCache.Integrations.Benchmarks" />
   </ItemGroup>

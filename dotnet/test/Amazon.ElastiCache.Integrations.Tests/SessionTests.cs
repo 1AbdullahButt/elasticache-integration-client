@@ -105,20 +105,34 @@ public class SessionTests
     }
 
     [Fact]
-    public async Task ATimeoutIsRetryable()
+    public async Task ATimeoutIsRetryableOnlyForAListedOperation()
     {
         await using var rig = await SessionRig.StartAsync();
         rig.Connection.OnRequest = (_, _) => Task.FromException<RequestReply>(new ElastiCacheIntegrationsTimeoutException("slow"));
 
         Assert.Equal(OutcomeKind.Retryable, (await rig.SendAsync()).Kind);
+        Assert.Equal(OutcomeKind.Terminal, (await rig.SendAsync("PutItem")).Kind);
         Assert.True(rig.Session.IsOpen);
     }
 
     [Fact]
-    public async Task ADeterministicRejectFailsInStrictMode()
+    public async Task ARejectionFailsWhileFallbackIsOn()
     {
-        await using var rig = await SessionRig.StartAsync(SessionRig.Options(fallback: TimeSpan.Zero));
+        await using var rig = await SessionRig.StartAsync();
         rig.Connection.OnRequest = (_, _) => Task.FromResult(Rejected("UNSUPPORTED"));
+
+        Assert.Equal(OutcomeKind.Terminal, (await rig.SendAsync()).Kind);
+    }
+
+    [Fact]
+    public async Task AnOriginErrorOnAClosedConnectionIsNotRetryable()
+    {
+        await using var rig = await SessionRig.StartAsync();
+        rig.Connection.OnRequest = (_, _) =>
+        {
+            rig.Connection.MarkDead();
+            return Task.FromResult(Rejected("ORIGIN_ERROR"));
+        };
 
         Assert.Equal(OutcomeKind.Terminal, (await rig.SendAsync()).Kind);
     }

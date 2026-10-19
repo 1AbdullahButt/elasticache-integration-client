@@ -188,4 +188,57 @@ public class SdkEndToEndTests
         Assert.Equal(3, server.Requests.Count);
         Assert.Equal(0, origin.Calls);
     }
+
+    [Fact]
+    public async Task ARejectionFailsWithoutRetryOrDynamoDB()
+    {
+        await using var server = new CacheServer { OnRequest = _ => new RespError("UNSUPPORTED", "not cached") };
+        var origin = new HttpHandlerTests.RecordingOrigin();
+        await using var client = await ClientAsync(server, origin, maxErrorRetry: 2);
+
+        var error = await Assert.ThrowsAsync<ElastiCacheIntegrationsServerException>(() => client.GetItemAsync("t", Key, Token));
+        Assert.Equal("UNSUPPORTED", error.Code);
+        Assert.Single(server.Requests);
+        Assert.Equal(0, origin.Calls);
+    }
+
+    [Theory]
+    [InlineData("GetItem", true)]
+    [InlineData("PutItem", false)]
+    public async Task AnOriginErrorIsRetriedOnlyForAListedOperation(string operation, bool retried)
+    {
+        await using var server = new CacheServer { OnRequest = _ => new RespError("ORIGIN_ERROR", "throttled") };
+        var origin = new HttpHandlerTests.RecordingOrigin();
+        await using var client = await ClientAsync(server, origin, maxErrorRetry: 2);
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => CallAsync(client, operation));
+        var cause = retried ? Assert.IsType<HttpRequestException>(error).InnerException : error;
+        Assert.Equal("ORIGIN_ERROR", Assert.IsType<ElastiCacheIntegrationsServerException>(cause).Code);
+        Assert.Equal(retried ? 3 : 1, server.Requests.Count);
+        Assert.Equal(0, origin.Calls);
+    }
+
+    [Theory]
+    [InlineData("GetItem", true)]
+    [InlineData("PutItem", false)]
+    public async Task ALostConnectionIsRetriedOnlyForAListedOperation(string operation, bool retried)
+    {
+        var calls = 0;
+        await using var server = new CacheServer { OnRequest = _ => Interlocked.Increment(ref calls) == 1 ? new MockReply.Drop() : Cached("{}") };
+        var origin = new HttpHandlerTests.RecordingOrigin();
+        await using var client = await ClientAsync(server, origin, maxErrorRetry: 1);
+
+        if (retried)
+        {
+            // The SDK's retry goes through the cache, or to DynamoDB if the reconnect is not done yet.
+            await CallAsync(client, operation);
+            Assert.Equal(2, server.Requests.Count + origin.Calls);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<ElastiCacheIntegrationsConnectionLostException>(() => CallAsync(client, operation));
+            Assert.Single(server.Requests);
+            Assert.Equal(0, origin.Calls);
+        }
+    }
 }

@@ -65,35 +65,47 @@ internal readonly record struct ElastiCacheIntegrationsOutcome
     public static ElastiCacheIntegrationsOutcome Terminal(Exception error) => new(OutcomeKind.Terminal, null, error);
 }
 
-/// <summary>The request outcome table: what a reply or a failure on a live connection means.</summary>
+/// <summary>
+/// The request outcome table: what a reply or a failure on a live connection means. A call that
+/// may have run is retried only when <c>replayable</c>: its operation is in
+/// <see cref="IdempotentOperations"/>.
+/// </summary>
 internal static class RequestOutcomes
 {
-    /// <summary>Maps a reply. <paramref name="onAuthError"/> runs only for <c>-AUTH_ERROR</c>.</summary>
-    public static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool strict, Func<AuthErrorAction> onAuthError) => reply switch
+    /// <summary>
+    /// Maps a reply. <paramref name="onAuthError"/> runs only for <c>-AUTH_ERROR</c>.
+    /// <paramref name="replayable"/> also requires the connection to be open still.
+    /// </summary>
+    public static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable, Func<AuthErrorAction> onAuthError) => reply switch
     {
         RequestReply.Served served => ElastiCacheIntegrationsOutcome.Served(served.Response),
         RequestReply.Rejected { Error: var error } => ServerErrors.Classify(error.Code) switch
         {
-            // Refused before any origin call, so a read or a write is safe to send to DynamoDB.
-            ServerErrorKind.Deterministic => strict ? ElastiCacheIntegrationsOutcome.Terminal(error) : ElastiCacheIntegrationsOutcome.Origin,
             ServerErrorKind.Auth => onAuthError() == AuthErrorAction.Origin
                 ? ElastiCacheIntegrationsOutcome.Origin
                 : ElastiCacheIntegrationsOutcome.Terminal(new ElastiCacheIntegrationsCacheUnavailableException("The cache holds no valid AWS credentials for this client.", error)),
-            _ => ElastiCacheIntegrationsOutcome.Retryable(error),
+
+            // The cache did not run it, so any operation is safe to retry.
+            ServerErrorKind.ConnectionDrop => ElastiCacheIntegrationsOutcome.Retryable(error),
+            ServerErrorKind.Origin when replayable => ElastiCacheIntegrationsOutcome.Retryable(error),
+            _ => ElastiCacheIntegrationsOutcome.Terminal(error),
         },
-        _ => ElastiCacheIntegrationsOutcome.Retryable(new ElastiCacheIntegrationsProtocolException($"Unexpected reply {reply.GetType().Name} for a final aws.request reply.")),
+        _ => Indeterminate(new ElastiCacheIntegrationsProtocolException($"Unexpected reply {reply.GetType().Name} for a final aws.request reply."), replayable),
     };
 
     /// <summary>Maps a failure of <see cref="ElastiCacheIntegrationsConnection.RequestAsync"/>; null when it is not one this table owns.</summary>
-    public static ElastiCacheIntegrationsOutcome? FromException(Exception error) => error switch
+    public static ElastiCacheIntegrationsOutcome? FromException(Exception error, bool replayable) => error switch
     {
         // Nothing was sent: the connection is healthy but full, so the SDK retries.
         ElastiCacheIntegrationsPendingLimitException => ElastiCacheIntegrationsOutcome.Retryable(error),
 
-        // The request may have reached the cache. It is never replayed through the cache.
-        ElastiCacheIntegrationsTimeoutException or ElastiCacheIntegrationsConnectionLostException or ElastiCacheIntegrationsProtocolException => ElastiCacheIntegrationsOutcome.Retryable(error),
+        // The request may have run. It is never replayed by this client.
+        ElastiCacheIntegrationsTimeoutException or ElastiCacheIntegrationsConnectionLostException or ElastiCacheIntegrationsProtocolException => Indeterminate(error, replayable),
         _ => null,
     };
+
+    private static ElastiCacheIntegrationsOutcome Indeterminate(Exception error, bool replayable) =>
+        replayable ? ElastiCacheIntegrationsOutcome.Retryable(error) : ElastiCacheIntegrationsOutcome.Terminal(error);
 }
 
 /// <summary>
@@ -149,7 +161,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
 
     internal long AuthGeneration => _reauth.Generation;
 
-    private bool Strict => _options.FallbackDuration == TimeSpan.Zero;
+    private bool NoFallback => _options.FallbackDuration == TimeSpan.Zero;
 
     /// <summary>
     /// Validates the options, serializes the overrides once, and brings up the first connection:
@@ -240,6 +252,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
             }
 
             var generation = _reauth.Generation;
+            var replayable = IdempotentOperations.Contains(request.Metadata);
             RequestReply reply;
             try
             {
@@ -250,7 +263,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
                 OnPendingLimit();
                 return ElastiCacheIntegrationsOutcome.Retryable(e);
             }
-            catch (Exception e) when (RequestOutcomes.FromException(e) is { } outcome)
+            catch (Exception e) when (RequestOutcomes.FromException(e, replayable) is { } outcome)
             {
                 return outcome;
             }
@@ -263,7 +276,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
                 continue;
             }
 
-            return RequestOutcomes.FromReply(reply, Strict, () => _reauth.OnAuthError(generation));
+            return RequestOutcomes.FromReply(reply, replayable && connection.IsOpen, () => _reauth.OnAuthError(generation));
         }
     }
 
@@ -325,7 +338,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
 
         // The fallback window starts after the reconnect wait, so the wait does not use it up.
         var down = _time.GetElapsedTime(outage.DroppedAt);
-        if (!Strict && (_options.FallbackDuration == Timeout.InfiniteTimeSpan || down - _options.ReconnectWait < _options.FallbackDuration))
+        if (!NoFallback && (_options.FallbackDuration == Timeout.InfiniteTimeSpan || down - _options.ReconnectWait < _options.FallbackDuration))
         {
             return ElastiCacheIntegrationsOutcome.Origin;
         }
@@ -495,7 +508,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
                 {
                     _logger.LogWarning(ElastiCacheIntegrationsEvents.Reconnecting, e,
                         "The client cannot reconnect to the cache; retrying in the background. Requests {Mode} meanwhile",
-                        Strict ? "fail" : _options.FallbackDuration == Timeout.InfiniteTimeSpan ? "go to DynamoDB" : $"go to DynamoDB for up to {_options.FallbackDuration}");
+                        NoFallback ? "fail" : _options.FallbackDuration == Timeout.InfiniteTimeSpan ? "go to DynamoDB" : $"go to DynamoDB for up to {_options.FallbackDuration}");
                 }
                 else
                 {
