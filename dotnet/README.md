@@ -263,8 +263,8 @@ because the cache may have run it. This covers a reply timeout (`RequestTimeout`
 connection and a corrupt reply. What happens next depends on the operation, using the shared
 catalog `../shared/idempotent-operations.json`, which is embedded in the package:
 
-- A listed operation (`GetItem`, `Query`, `Scan`, `BatchGetItem`, `TransactGetItems`, the
-  `Describe*` and `List*` calls) is returned to the SDK as an `HttpRequestException`, so the SDK's
+- A listed operation (`GetItem`, `Query`, `Scan`, `BatchGetItem`, `TransactGetItems`, and the
+  read-only control-plane calls in the catalog) is returned to the SDK as an `HttpRequestException`, so the SDK's
   retry policy decides. The retry enters the client again: it waits for the reconnect, and goes to
   DynamoDB only inside the fallback window.
 - Any other operation, such as `PutItem` or `TransactWriteItems`, fails with the client error
@@ -276,7 +276,7 @@ The cache's error replies follow the same contract as the other clients:
 - `ORIGIN_ERROR`: retryable as above for a listed operation while its connection is open, else it
   fails.
 - `MOVED` and `NOAUTH`: the cache did not run the call, so it is retryable for any operation (see
-  below).
+  below). This is a .NET addition: the other clients have no special case for these codes.
 - Every other code (`PARSE_ERROR`, `UNSUPPORTED`, `UNIMPLEMENTED`, `REGION_MISMATCH`,
   `CONFIG_INVALID`, `INTERNAL_ERROR`, any unknown code) fails with
   `ElastiCacheIntegrationsServerException`. It is not retried and does not go to DynamoDB.

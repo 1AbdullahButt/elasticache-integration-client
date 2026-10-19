@@ -72,8 +72,8 @@ internal readonly record struct ElastiCacheIntegrationsOutcome
 /// </summary>
 internal static class RequestOutcomes
 {
-    /// <summary>Maps a reply. <paramref name="replayable"/> also requires the connection to be open still.</summary>
-    public static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable) => reply switch
+    /// <summary>Maps a reply. An <c>ORIGIN_ERROR</c> is retried only while <paramref name="connectionOpen"/>.</summary>
+    public static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable, bool connectionOpen) => reply switch
     {
         RequestReply.Served served => ElastiCacheIntegrationsOutcome.Served(served.Response),
         RequestReply.Rejected { Error: var error } => ServerErrors.Classify(error.Code) switch
@@ -83,7 +83,7 @@ internal static class RequestOutcomes
 
             // The cache did not run it, so any operation is safe to retry.
             ServerErrorKind.ConnectionDrop => ElastiCacheIntegrationsOutcome.Retryable(error),
-            ServerErrorKind.Origin when replayable => ElastiCacheIntegrationsOutcome.Retryable(error),
+            ServerErrorKind.Origin when replayable && connectionOpen => ElastiCacheIntegrationsOutcome.Retryable(error),
             _ => ElastiCacheIntegrationsOutcome.Terminal(error),
         },
         _ => Indeterminate(new ElastiCacheIntegrationsProtocolException($"Unexpected reply {reply.GetType().Name} for a final aws.request reply."), replayable),
@@ -276,7 +276,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
                     "The cache has no valid AWS credentials for this connection; reconnecting, and the call goes to DynamoDB");
             }
 
-            return RequestOutcomes.FromReply(reply, replayable && connection.IsOpen);
+            return RequestOutcomes.FromReply(reply, replayable, connection.IsOpen);
         }
     }
 
@@ -448,7 +448,7 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
             retired = ApplyConfig(connection.Config, predicates);
             _confirmedAt = _time.GetTimestamp();
 
-            // A new generation before the connection is visible, so every request on it reads the new one.
+            // Clears staleness before the connection is visible, so no request on it sees the old AUTH.
             _reauth.OnAuthenticated();
             outage = _state.Outage;
             Volatile.Write(ref _state, new State(connection, null));
@@ -464,8 +464,10 @@ internal sealed class ElastiCacheIntegrationsSession : IDisposable, IAsyncDispos
         return true;
     }
 
-    /// <summary>The live connection died: start an outage and reconnect in the background. Runs once per connection.</summary>
-    /// <summary>Starts the reconnect if <paramref name="connection"/> is the live one. True when it was.</summary>
+    /// <summary>
+    /// The live connection died or must be replaced: start an outage and reconnect in the background.
+    /// True only for the first call for the live connection.
+    /// </summary>
     private bool OnClosed(ICacheConnection connection)
     {
         lock (_gate)

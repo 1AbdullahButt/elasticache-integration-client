@@ -8,8 +8,8 @@ public class RequestOutcomesTests
 
     private static RequestReply Rejected(string code) => new RequestReply.Rejected(new ElastiCacheIntegrationsServerException(code, "no"));
 
-    private static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable = true) =>
-        RequestOutcomes.FromReply(reply, replayable);
+    private static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable = true, bool connectionOpen = true) =>
+        RequestOutcomes.FromReply(reply, replayable, connectionOpen);
 
     [Fact]
     public void AServedReplyIsServedUnchanged()
@@ -47,6 +47,8 @@ public class RequestOutcomesTests
         var outcome = FromReply(Rejected("ORIGIN_ERROR"), replayable: false);
         Assert.Equal(OutcomeKind.Terminal, outcome.Kind);
         Assert.Equal("ORIGIN_ERROR", Assert.IsType<ElastiCacheIntegrationsServerException>(outcome.Error).Code);
+
+        Assert.Equal(OutcomeKind.Terminal, FromReply(Rejected("ORIGIN_ERROR"), connectionOpen: false).Kind);
     }
 
     [Theory]
@@ -73,6 +75,9 @@ public class RequestOutcomesTests
         Assert.IsType<ElastiCacheIntegrationsProtocolException>(retried.Error);
 
         Assert.Equal(OutcomeKind.Terminal, FromReply(new RequestReply.Deferred("7"), replayable: false).Kind);
+
+        // Only ORIGIN_ERROR needs the connection open; a corrupt reply is retried like a lost connection.
+        Assert.Equal(OutcomeKind.Retryable, FromReply(new RequestReply.Deferred("7"), connectionOpen: false).Kind);
     }
 
     [Fact]
