@@ -8,8 +8,8 @@ public class RequestOutcomesTests
 
     private static RequestReply Rejected(string code) => new RequestReply.Rejected(new ElastiCacheIntegrationsServerException(code, "no"));
 
-    private static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable = true, AuthErrorAction auth = AuthErrorAction.Origin) =>
-        RequestOutcomes.FromReply(reply, replayable, () => auth);
+    private static ElastiCacheIntegrationsOutcome FromReply(RequestReply reply, bool replayable = true) =>
+        RequestOutcomes.FromReply(reply, replayable);
 
     [Fact]
     public void AServedReplyIsServedUnchanged()
@@ -59,34 +59,16 @@ public class RequestOutcomesTests
     }
 
     [Fact]
-    public void AnAuthErrorFollowsTheAuthWindow()
+    public void AnAuthErrorGoesToDynamoDBForEveryOperation()
     {
-        var calls = 0;
-        Assert.Equal(ElastiCacheIntegrationsOutcome.Origin, RequestOutcomes.FromReply(Rejected("AUTH_ERROR"), false, () =>
-        {
-            calls++;
-            return AuthErrorAction.Origin;
-        }));
-        Assert.Equal(1, calls);
-
-        var failed = FromReply(Rejected("AUTH_ERROR"), auth: AuthErrorAction.Fail);
-        Assert.Equal(OutcomeKind.Terminal, failed.Kind);
-        var error = Assert.IsType<ElastiCacheIntegrationsCacheUnavailableException>(failed.Error);
-        Assert.Equal("AUTH_ERROR", Assert.IsType<ElastiCacheIntegrationsServerException>(error.InnerException).Code);
+        Assert.Equal(ElastiCacheIntegrationsOutcome.Origin, FromReply(Rejected("AUTH_ERROR")));
+        Assert.Equal(ElastiCacheIntegrationsOutcome.Origin, FromReply(Rejected("AUTH_ERROR"), replayable: false));
     }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("UNSUPPORTED")]
-    [InlineData("ORIGIN_ERROR")]
-    [InlineData("MOVED")]
-    public void OnlyAnAuthErrorConsultsTheAuthWindow(string? code) =>
-        RequestOutcomes.FromReply(code is null ? new RequestReply.Served(Response) : Rejected(code), true, () => throw new InvalidOperationException("consulted"));
 
     [Fact]
     public void ADeferredReplyIsIndeterminate()
     {
-        var retried = RequestOutcomes.FromReply(new RequestReply.Deferred("7"), true, () => throw new InvalidOperationException("consulted"));
+        var retried = FromReply(new RequestReply.Deferred("7"));
         Assert.Equal(OutcomeKind.Retryable, retried.Kind);
         Assert.IsType<ElastiCacheIntegrationsProtocolException>(retried.Error);
 
