@@ -50,9 +50,8 @@ own.
 `dotnet/` holds a C# client for the AWS SDK for .NET v4 (`net8.0`, also tested
 on the .NET 10 runtime), published as the `Amazon.ElastiCache.Integrations`
 NuGet package. Its tests run the `shared/` fixtures, and it embeds
-`shared/idempotent-operations.json` as a resource. It still has its own
-`.github/workflows/dotnet-ci.yml`, which is being aligned with the other
-clients.
+`shared/idempotent-operations.json` as a resource. Like the other clients, it
+runs in the `ci` check through `.github/workflows/dotnet-ci.yml`.
 
 ## Repository layout
 
