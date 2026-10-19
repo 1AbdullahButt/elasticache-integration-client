@@ -49,7 +49,7 @@ own.
 
 `dotnet/` holds a C# client for the AWS SDK for .NET v4 (`net8.0`, also tested
 on the .NET 10 runtime), published as the `Amazon.ElastiCache.Integrations`
-NuGet package. It does not yet run the `shared/` fixtures or package
+NuGet package. Its tests run the `shared/` fixtures. It does not yet package
 `shared/idempotent-operations.json`, and has its own
 `.github/workflows/dotnet-ci.yml`. These are being aligned with the other
 clients.
