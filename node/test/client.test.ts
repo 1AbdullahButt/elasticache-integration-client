@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { constructStack } from "@smithy/core/client";
@@ -18,7 +21,8 @@ vi.mock("../src/auth.js", () => ({
   buildCacheAuthProvider: mocks.buildCacheAuthProvider,
 }));
 
-vi.mock("../src/connection.js", () => ({
+vi.mock("../src/connection.js", async () => ({
+  ...(await vi.importActual("../src/connection.js")),
   ElastiCacheIntegrationsConnector: class {
     constructor(...args: unknown[]) {
       mocks.connection(...args);
@@ -114,12 +118,13 @@ function setup() {
   mocks.session.open.mockResolvedValue(undefined);
 }
 
+const caCertsPath = fileURLToPath(new URL("./fixtures/tls/localhost.crt", import.meta.url));
+
 const options = {
   endpoint: "cache.example.com:6379",
   cacheName: "my-cache",
   userId: "iam-user",
-  overrides: { timeout: 42 },
-  connectorOptions: { tls: false, requestTimeout: 1234 },
+  clientConfiguration: { cachePolicyOverrides: { timeout: 42 }, cacheRequestTimeout: 1.234 },
 };
 
 describe("install", () => {
@@ -143,8 +148,8 @@ describe("install", () => {
     };
     connectorFactory();
     expect(mocks.connection).toHaveBeenCalledWith("cache.example.com", 6379, {
-      tls: false,
       requestTimeout: 1234,
+      verify: true,
       authProvider: generatedAuthProvider,
     });
     expect(mocks.sessionConstructor).toHaveBeenCalledWith(
@@ -236,32 +241,14 @@ describe("install", () => {
     expect(mocks.sessionConstructor).not.toHaveBeenCalled();
   });
 
-  it("passes reconnect policy to the session", async () => {
-    setup();
-    const reconnectPolicy = {
-      connectAttempts: 2,
-      connectionTimeoutMs: 50,
-      baseDelayMs: 5,
-      maxDelayMs: 20,
-      jitter: 0.1,
-    };
-
-    await install({ client: new FakeClient(), ...options, reconnectPolicy });
-
-    expect(mocks.sessionConstructor).toHaveBeenCalledWith(
-      expect.any(Function),
-      { timeout: 42 },
-      {
-        ...reconnectPolicy,
-        stalenessDurationMs: 3_600_000,
-      },
-    );
-  });
-
-  it("passes a custom IAM refresh interval to the managed auth provider", async () => {
+  it("passes iamTokenRefreshDelay to the managed auth provider", async () => {
     setup();
 
-    await install({ client: new FakeClient(), ...options, iamRefreshAfterSeconds: 120 });
+    await install({
+      client: new FakeClient(),
+      ...options,
+      clientConfiguration: { ...options.clientConfiguration, iamTokenRefreshDelay: 120 },
+    });
 
     expect(mocks.buildCacheAuthProvider).toHaveBeenCalledWith({
       cacheName: "my-cache",
@@ -272,10 +259,14 @@ describe("install", () => {
     });
   });
 
-  it("converts the public fallback duration from seconds to milliseconds", async () => {
+  it("passes the fallbackDuration to the session", async () => {
     setup();
 
-    await install({ client: new FakeClient(), ...options, fallbackDuration: 60 });
+    await install({
+      client: new FakeClient(),
+      ...options,
+      clientConfiguration: { ...options.clientConfiguration, fallbackDuration: 60 },
+    });
 
     expect(mocks.sessionConstructor).toHaveBeenCalledWith(
       expect.any(Function),
@@ -287,65 +278,286 @@ describe("install", () => {
     );
   });
 
-  it.each([0.5, Number.MAX_SAFE_INTEGER])(
-    "rejects unsupported fallback duration %s",
-    async (fallbackDuration) => {
-      setup();
-
-      await expect(
-        install({ client: new FakeClient(), ...options, fallbackDuration }),
-      ).rejects.toThrow("fallbackDuration must be a whole number of seconds");
-    },
-  );
-
-  it("uses a supplied authProvider instead of generating a token", async () => {
+  it.each([
+    ["cacheRequestTimeout", 0, "cacheRequestTimeout must be a positive number of seconds"],
+    ["cacheRequestTimeout", true, "cacheRequestTimeout must be a positive number of seconds"],
+    ["cacheRequestTimeout", NaN, "cacheRequestTimeout must be a positive number of seconds"],
+    ["cacheRequestTimeout", Infinity, "cacheRequestTimeout must be a positive number of seconds"],
+    [
+      "cacheRequestTimeout",
+      2_147_484,
+      "cacheRequestTimeout must be a positive number of seconds, at most 2147483",
+    ],
+    ["fallbackDuration", 0.5, "fallbackDuration must be a whole number of seconds"],
+    ["fallbackDuration", true, "fallbackDuration must be a whole number of seconds"],
+    ["fallbackDuration", "60", "fallbackDuration must be a whole number of seconds"],
+    [
+      "fallbackDuration",
+      Number.MAX_SAFE_INTEGER,
+      "fallbackDuration must be a whole number of seconds",
+    ],
+    ["cachePolicyOverrides", [], "cachePolicyOverrides must be an object or undefined"],
+    ["cachePolicyOverrides", { item_ttl: 60n }, "cachePolicyOverrides must be JSON-serializable"],
+    [
+      "cachePolicyOverrides",
+      { item_ttl: Infinity },
+      "cachePolicyOverrides must be JSON-serializable",
+    ],
+    ["cachePolicyTimeout", 0, "cachePolicyTimeout must be a positive whole number of seconds"],
+    ["cachePolicyTimeout", -1, "cachePolicyTimeout must be a positive whole number of seconds"],
+    ["cachePolicyTimeout", 1.5, "cachePolicyTimeout must be a positive whole number of seconds"],
+    ["cachePolicyTimeout", NaN, "cachePolicyTimeout must be a positive whole number of seconds"],
+    [
+      "cachePolicyTimeout",
+      Infinity,
+      "cachePolicyTimeout must be a positive whole number of seconds",
+    ],
+    [
+      "cachePolicyTimeout",
+      2 ** 53,
+      "cachePolicyTimeout must be a positive whole number of seconds",
+    ],
+    ["cachePolicyTimeout", "600", "cachePolicyTimeout must be a positive whole number of seconds"],
+    [
+      "iamTokenRefreshDelay",
+      0,
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+    [
+      "iamTokenRefreshDelay",
+      true,
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+    [
+      "iamTokenRefreshDelay",
+      NaN,
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+    [
+      "iamTokenRefreshDelay",
+      Infinity,
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+    [
+      "iamTokenRefreshDelay",
+      880,
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+    [
+      "iamTokenRefreshDelay",
+      "300",
+      "iamTokenRefreshDelay must be a number of seconds greater than 0 and less than 880",
+    ],
+  ])("clientConfiguration rejects unusable values: %s = %s", async (field, bad, message) => {
     setup();
-    const authProvider = () => ["injected-user", "injected-token"] as [string, string];
+
+    await expect(
+      install({
+        client: new FakeClient(),
+        ...options,
+        clientConfiguration: { [field]: bad } as never,
+      }),
+    ).rejects.toThrow(message);
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined, 5_000],
+    [1.25, 1_250],
+  ])("passes cacheRequestTimeout %s to the connector factory", async (requested, expected) => {
+    setup();
 
     await install({
       client: new FakeClient(),
       endpoint: options.endpoint,
       cacheName: options.cacheName,
-      connectorOptions: { tls: false, authProvider },
+      ...(requested === undefined
+        ? {}
+        : { clientConfiguration: { cacheRequestTimeout: requested } }),
     });
 
-    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
     const connectorFactory = mocks.sessionConstructor.mock.calls[0]![0] as () => unknown;
     connectorFactory();
-    expect(mocks.connection).toHaveBeenCalledWith("cache.example.com", 6379, {
-      tls: false,
-      authProvider,
-    });
-    expect(mocks.sessionConstructor).toHaveBeenCalledWith(
-      expect.any(Function),
-      {},
-      {
-        stalenessDurationMs: 3_600_000,
-      },
-    );
+    expect(mocks.connection.mock.calls[0]![2]).toMatchObject({ requestTimeout: expected });
   });
 
-  it("plumbs a custom stalenessDuration to the session as milliseconds", async () => {
+  it("passes cachePolicyOverrides to the session", async () => {
     setup();
 
-    await install({ client: new FakeClient(), ...options, stalenessDuration: 120 });
+    await install({
+      client: new FakeClient(),
+      ...options,
+      clientConfiguration: { cachePolicyOverrides: { tables: ["t"] } },
+    });
 
-    expect(mocks.sessionConstructor).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      stalenessDurationMs: 120_000,
+    expect(mocks.sessionConstructor.mock.calls[0]![1]).toEqual({ tables: ["t"] });
+  });
+
+  it("copies cachePolicyOverrides before passing them to the session", async () => {
+    setup();
+    const overrides = { tables: ["t"] };
+
+    await install({
+      client: new FakeClient(),
+      ...options,
+      clientConfiguration: { cachePolicyOverrides: overrides },
+    });
+    overrides.tables.push("other");
+
+    expect(mocks.sessionConstructor.mock.calls[0]![1]).toEqual({ tables: ["t"] });
+  });
+
+  it("reads the caCerts file and passes verify and its contents to the connector", async () => {
+    setup();
+
+    await install({
+      client: new FakeClient(),
+      endpoint: options.endpoint,
+      cacheName: options.cacheName,
+      verify: false,
+      caCerts: caCertsPath,
+    });
+
+    const connectorFactory = mocks.sessionConstructor.mock.calls[0]![0] as () => unknown;
+    connectorFactory();
+    expect(mocks.connection.mock.calls[0]![2]).toMatchObject({
+      verify: false,
+      caCerts: readFileSync(caCertsPath),
     });
   });
 
-  it.each([0, -1, 1.5, NaN, Infinity, 2 ** 53])(
-    "rejects an invalid stalenessDuration of %s before connecting",
-    async (stalenessDuration) => {
-      setup();
+  it("rejects a caCerts path that cannot be read", async () => {
+    setup();
 
-      await expect(
-        install({ client: new FakeClient(), ...options, stalenessDuration }),
-      ).rejects.toThrow(ElastiCacheIntegrationsConfigError);
-      expect(mocks.sessionConstructor).not.toHaveBeenCalled();
-    },
-  );
+    await expect(
+      install({
+        client: new FakeClient(),
+        ...options,
+        caCerts: "/no/such/ca-bundle.pem",
+      }),
+    ).rejects.toThrow(
+      new ElastiCacheIntegrationsConfigError(
+        "caCerts must be the path of a readable CA bundle file, got /no/such/ca-bundle.pem",
+      ),
+    );
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "fallbackDuration",
+    "overrides",
+    "stalenessDuration",
+    "iamRefreshAfterSeconds",
+    "connectorOptions",
+    "reconnectPolicy",
+  ])("rejects the unknown install option %s", async (name) => {
+    setup();
+
+    await expect(
+      install({ client: new FakeClient(), ...options, [name]: 0 } as never),
+    ).rejects.toThrow(
+      new ElastiCacheIntegrationsConfigError(`install() got an unexpected option '${name}'`),
+    );
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown clientConfiguration field", async () => {
+    setup();
+
+    await expect(
+      install({
+        client: new FakeClient(),
+        ...options,
+        clientConfiguration: { fallbackDurationSeconds: 0 } as never,
+      }),
+    ).rejects.toThrow(
+      new ElastiCacheIntegrationsConfigError(
+        "clientConfiguration got an unexpected field 'fallbackDurationSeconds'",
+      ),
+    );
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it.each([0, "", "false", null])("rejects a non-boolean verify %j", async (verify) => {
+    setup();
+
+    await expect(
+      install({ client: new FakeClient(), ...options, verify: verify as never }),
+    ).rejects.toThrow(
+      new ElastiCacheIntegrationsConfigError(
+        `verify must be a boolean, got ${typeof verify === "object" ? "null" : typeof verify}`,
+      ),
+    );
+    expect(mocks.buildCacheAuthProvider).not.toHaveBeenCalled();
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it("treats a null clientConfiguration as all defaults", async () => {
+    setup();
+
+    await install({
+      client: new FakeClient(),
+      endpoint: options.endpoint,
+      cacheName: options.cacheName,
+      clientConfiguration: null,
+    });
+
+    const connectorFactory = mocks.sessionConstructor.mock.calls[0]![0] as () => unknown;
+    connectorFactory();
+    expect(mocks.connection.mock.calls[0]![2]).toMatchObject({ requestTimeout: 5_000 });
+    expect(mocks.sessionConstructor.mock.calls[0]![2]).toEqual({ stalenessDurationMs: 3_600_000 });
+  });
+
+  it("rejects a clientConfiguration that is not an object", async () => {
+    setup();
+
+    await expect(
+      install({ client: new FakeClient(), ...options, clientConfiguration: "fast" as never }),
+    ).rejects.toThrow(
+      new ElastiCacheIntegrationsConfigError(
+        "clientConfiguration must be an object, null, or undefined, got string",
+      ),
+    );
+    expect(mocks.sessionConstructor).not.toHaveBeenCalled();
+  });
+
+  it("verifies the cache's TLS certificate by default", async () => {
+    setup();
+
+    await install({
+      client: new FakeClient(),
+      endpoint: options.endpoint,
+      cacheName: options.cacheName,
+    });
+
+    const connectorFactory = mocks.sessionConstructor.mock.calls[0]![0] as () => unknown;
+    connectorFactory();
+    expect(mocks.connection.mock.calls[0]![2]).toMatchObject({ verify: true });
+  });
+
+  it.each([
+    [undefined, 3_600_000],
+    [600, 600_000],
+  ])("passes the cachePolicyTimeout %s to the session", async (requested, expected) => {
+    setup();
+
+    await install({
+      client: new FakeClient(),
+      endpoint: options.endpoint,
+      cacheName: options.cacheName,
+      ...(requested === undefined
+        ? {}
+        : { clientConfiguration: { cachePolicyTimeout: requested } }),
+    });
+
+    expect(mocks.sessionConstructor).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      stalenessDurationMs: expected,
+    });
+  });
 
   it.each(["auth", "open", "install"])(
     "keeps the supplied client open when %s bring-up fails",
@@ -371,19 +583,13 @@ describe("install", () => {
     },
   );
 
-  it.each([
-    ["an invalid fallbackDuration", { fallbackDuration: 1.5 }],
-    ["a session that rejects its reconnect policy", {}],
-  ])("closes the managed auth provider when install fails on %s", async (_, extra) => {
+  it("closes the auth provider when the session rejects its reconnect policy", async () => {
     setup();
-    const error = new ElastiCacheIntegrationsConfigError("jitter must be in [0, 1)");
-    if (!("fallbackDuration" in extra)) {
-      mocks.sessionConstructor.mockImplementationOnce(() => {
-        throw error;
-      });
-    }
+    mocks.sessionConstructor.mockImplementationOnce(() => {
+      throw new ElastiCacheIntegrationsConfigError("jitter must be in [0, 1)");
+    });
 
-    await expect(install({ client: new FakeClient(), ...options, ...extra })).rejects.toThrow(
+    await expect(install({ client: new FakeClient(), ...options })).rejects.toThrow(
       ElastiCacheIntegrationsConfigError,
     );
 
