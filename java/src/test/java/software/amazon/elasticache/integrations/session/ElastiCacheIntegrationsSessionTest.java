@@ -1801,6 +1801,52 @@ class ElastiCacheIntegrationsSessionTest {
     }
 
     @Test
+    void handle_closingTheTransportClosesTheSession() {
+        ElastiCacheIntegrationsHandle handle =
+                ElastiCacheIntegrationsHandle.builder()
+                        .host("localhost")
+                        .port(server.getPort())
+                        .sslContext(clientSslContext)
+                        .authCredentials(TEST_USER, TEST_TOKEN)
+                        .build();
+        try {
+            handle.open();
+
+            // An SDK client built with httpClientBuilder(...) owns the transport and closes it when
+            // the application closes the client. A transport passed to httpClient(...) is never
+            // closed by the SDK, so this test closes it the way the SDK-owned path does.
+            handle.getHttpClient().close();
+
+            assertEquals(ElastiCacheIntegrationsSession.State.CLOSED, handle.getSession().getState());
+        } finally {
+            handle.close();
+        }
+    }
+
+    @Test
+    void asyncHandle_closingTheTransportClosesTheSession() {
+        ElastiCacheIntegrationsAsyncHandle handle =
+                ElastiCacheIntegrationsAsyncHandle.builder()
+                        .host("localhost")
+                        .port(server.getPort())
+                        .sslContext(clientSslContext)
+                        .authCredentials(TEST_USER, TEST_TOKEN)
+                        .build();
+        try {
+            handle.open();
+
+            // An SDK client built with httpClientBuilder(...) owns the transport and closes it when
+            // the application closes the client. A transport passed to httpClient(...) is never
+            // closed by the SDK, so this test closes it the way the SDK-owned path does.
+            handle.getHttpClient().close();
+
+            assertEquals(ElastiCacheIntegrationsSession.State.CLOSED, handle.getSession().getState());
+        } finally {
+            handle.close();
+        }
+    }
+
+    @Test
     void staleness_handleBuilderPassesDurationToSession() {
         assertThrows(
                 IllegalArgumentException.class,
