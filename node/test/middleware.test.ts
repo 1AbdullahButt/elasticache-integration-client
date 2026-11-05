@@ -61,6 +61,7 @@ function fakeConnector(
   return {
     isReady: true,
     connect: vi.fn(async () => undefined),
+    markReady: vi.fn(),
     handshake: vi.fn(async () => undefined),
     execute: vi.fn(async (command: string) =>
       command === "aws.config"
@@ -462,6 +463,7 @@ describe("elastiCacheIntegrations middleware", () => {
       connector,
       {},
       {
+        connectionTimeoutMs: 2_000,
         stalenessDurationMs: 1000,
         clock: () => clock,
       },
