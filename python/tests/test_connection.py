@@ -528,6 +528,12 @@ class TestElastiCacheIntegrationsConnector:
         self.connect_and_handshake(request_timeout_ms=5000)
         self.conn._io_loop_thread.call(time.sleep, 0.3)  # park the send behind this
         outcome: list = []
+        queued = threading.Event()
+        schedule = self.conn._io_loop_thread.call
+
+        def schedule_then_signal(*args):
+            schedule(*args)
+            queued.set()
 
         def caller():
             try:
@@ -537,9 +543,15 @@ class TestElastiCacheIntegrationsConnector:
                 outcome.append(exc)
 
         thread = threading.Thread(target=caller)
-        thread.start()
-        assert self.wait_until(lambda: self.conn._writer is not None)
-        time.sleep(0.05)  # let execute() queue the send behind the wedge
+        # Pin the interleaving to the path under test. Every other not-sent path raises the
+        # same class — the execute() pre-check even raises the same message — so without
+        # waiting for the send to be queued, a close() that won the race outright would
+        # satisfy these assertions without the liveness guard ever running.
+        with mock.patch.object(self.conn._io_loop_thread, "call", side_effect=schedule_then_signal):
+            thread.start()
+            assert queued.wait(timeout=5), "execute() never scheduled the send"
+        # The send is on the loop's queue behind the wedge and the caller is blocked on its
+        # future, so close() can only overtake it in _send.
         self.conn.close()
         thread.join(timeout=10)
         assert len(outcome) == 1, outcome
