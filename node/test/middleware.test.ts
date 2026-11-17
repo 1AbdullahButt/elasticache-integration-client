@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 
 import {
   ElastiCacheIntegrationsCacheUnavailable,
+  ElastiCacheIntegrationsConnectionError,
   ElastiCacheIntegrationsConnectionLost,
   ElastiCacheIntegrationsError,
   ElastiCacheIntegrationsOriginError,
@@ -493,7 +494,7 @@ describe("elastiCacheIntegrations middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("retries a dropped idempotent ElastiCacheIntegrations request without calling origin", async () => {
+  it("retries a dropped-connection timeout without calling origin", async () => {
     const signedRequest = new HttpRequest({
       protocol: "https:",
       hostname: "dynamodb.us-east-1.amazonaws.com",
@@ -587,7 +588,7 @@ describe("elastiCacheIntegrations middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => ({
       response: new HttpResponse({ statusCode: 200 }),
     }));
-    // Idempotency does not matter here: the request has not reached ElastiCacheIntegrations while reconnecting.
+    // The request has not reached the cache while reconnecting, so it goes to the origin.
     const handler = cacheMiddleware("svc", session)(next, { commandName: "RunCommand" });
 
     await expect(handler({ input: {}, request: request() })).resolves.toEqual({
@@ -732,9 +733,22 @@ describe("elastiCacheIntegrations middleware", () => {
     expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
   });
 
-  it("does not replay non-idempotent ElastiCacheIntegrations failures at the origin", async () => {
-    const cacheError = new ElastiCacheIntegrationsTimeoutError("cache unavailable");
+  it.each([
+    ["a timeout", () => new ElastiCacheIntegrationsTimeoutError("cache unavailable"), true],
+    [
+      "a dropped-connection timeout",
+      () => new ElastiCacheIntegrationsTimeoutError("timed out"),
+      false,
+    ],
+    [
+      "a connection error",
+      () => new ElastiCacheIntegrationsConnectionError("connect failed"),
+      false,
+    ],
+  ])("marks %s on a write retryable without calling origin", async (_, makeError, healthy) => {
+    const cacheError = makeError();
     const session = fakeSession({
+      isConnectionHealthy: healthy,
       request: vi.fn(async () => {
         throw cacheError;
       }),
@@ -747,10 +761,26 @@ describe("elastiCacheIntegrations middleware", () => {
     });
 
     await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+    expect((cacheError as Error & { $retryable?: object }).$retryable).toEqual({});
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("passes a non-idempotent request that was not sent to the cache through to origin", async () => {
+  it("does not mark a connection error retryable while the connection is healthy", async () => {
+    const cacheError = new ElastiCacheIntegrationsConnectionError("connect failed");
+    const session = fakeSession({
+      request: vi.fn(async () => {
+        throw cacheError;
+      }),
+    });
+    const handler = cacheMiddleware("dynamodb", session)(vi.fn(), {
+      commandName: "UpdateItemCommand",
+    });
+
+    await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+    expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+  });
+
+  it("passes a write that was not sent to the cache through to origin", async () => {
     const session = fakeSession({
       request: vi.fn(async () => {
         throw new ElastiCacheIntegrationsRequestNotSent("admission timed out");
@@ -810,11 +840,13 @@ describe("elastiCacheIntegrations middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("marks an idempotent ORIGIN_ERROR retryable without contacting origin", async () => {
-    const cacheError = new ElastiCacheIntegrationsRejectedError(
-      "ORIGIN_ERROR",
-      "origin unavailable",
-    );
+  it.each([
+    ["ORIGIN_ERROR", "GetItemCommand"],
+    ["ORIGIN_ERROR", "UpdateItemCommand"],
+    ["INTERNAL_ERROR", "GetItemCommand"],
+    ["INTERNAL_ERROR", "UpdateItemCommand"],
+  ])("marks %s on %s retryable without contacting origin", async (code, commandName) => {
+    const cacheError = new ElastiCacheIntegrationsRejectedError(code, "outcome unknown");
     const session = fakeSession({
       request: vi.fn(async () => {
         throw cacheError;
@@ -823,9 +855,7 @@ describe("elastiCacheIntegrations middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = cacheMiddleware("dynamodb", session)(next, {
-      commandName: "GetItemCommand",
-    });
+    const handler = cacheMiddleware("dynamodb", session)(next, { commandName });
 
     const failure = await handler({ input: {}, request: request() }).catch(
       (error: unknown) => error,
@@ -837,11 +867,50 @@ describe("elastiCacheIntegrations middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("returns a non-idempotent ORIGIN_ERROR without retry or fallback", async () => {
-    const cacheError = new ElastiCacheIntegrationsRejectedError(
-      "ORIGIN_ERROR",
-      "origin unavailable",
-    );
+  it.each(["ORIGIN_ERROR", "INTERNAL_ERROR"])(
+    "does not mark %s retryable on a dropped connection",
+    async (code) => {
+      const cacheError = new ElastiCacheIntegrationsRejectedError(code, "outcome unknown");
+      const session = fakeSession({
+        isConnectionHealthy: false,
+        request: vi.fn(async () => {
+          throw cacheError;
+        }),
+      });
+      const handler = cacheMiddleware("dynamodb", session)(vi.fn(), {
+        commandName: "GetItemCommand",
+      });
+
+      await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+      expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+    },
+  );
+
+  it.each(["ORIGIN_ERROR", "INTERNAL_ERROR"])(
+    "does not retry %s after the session is closed",
+    async (code) => {
+      const cacheError = new ElastiCacheIntegrationsRejectedError(code, "outcome unknown");
+      const session = fakeSession({
+        isOpen: false,
+        request: vi.fn(async () => {
+          throw cacheError;
+        }),
+      });
+      const handler = cacheMiddleware("dynamodb", session)(vi.fn(), {
+        commandName: "GetItemCommand",
+      });
+
+      await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
+      expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ["UNSUPPORTED", "UpdateItemCommand"],
+    ["PARSE_ERROR", "GetItemCommand"],
+    ["SOME_NEW_CODE", "UpdateItemCommand"],
+  ])("returns %s on %s without retry or fallback", async (code, commandName) => {
+    const cacheError = new ElastiCacheIntegrationsRejectedError(code, "rejected");
     const session = fakeSession({
       request: vi.fn(async () => {
         throw cacheError;
@@ -850,16 +919,14 @@ describe("elastiCacheIntegrations middleware", () => {
     const next = vi.fn<FinalizeHandler<object, object>>(async () => {
       throw new Error("origin must not be called");
     });
-    const handler = cacheMiddleware("dynamodb", session)(next, {
-      commandName: "UpdateItemCommand",
-    });
+    const handler = cacheMiddleware("dynamodb", session)(next, { commandName });
 
     await expect(handler({ input: {}, request: request() })).rejects.toBe(cacheError);
     expect((cacheError as Error & { $retryable?: object }).$retryable).toBeUndefined();
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("does not replay a non-idempotent malformed ElastiCacheIntegrations response", async () => {
+  it("does not replay a malformed ElastiCacheIntegrations response for a write", async () => {
     const cacheError = new ElastiCacheIntegrationsProtocolError("malformed response");
     const session = fakeSession({
       request: vi.fn(async () => {
@@ -877,7 +944,7 @@ describe("elastiCacheIntegrations middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("does not retry an idempotent malformed ElastiCacheIntegrations response", async () => {
+  it("does not retry a malformed ElastiCacheIntegrations response for a read", async () => {
     const cacheError = new ElastiCacheIntegrationsProtocolError("malformed response");
     const session = fakeSession({
       isConnectionHealthy: false,
