@@ -72,8 +72,7 @@ How a failed cache request reaches the SDK:
 
 ## Live DynamoDB E2E example
 
-Complete the repository-wide
-[live cache setup](../README.md#run-the-examples-against-a-live-cache),
+Copy the repository-root [`.env.example`](../.env.example) to `.env` and fill it in,
 then run from `node/`:
 
 ```bash
@@ -81,8 +80,7 @@ npm ci
 npm run example:local-e2e
 ```
 
-The example loads the repository-root `.env` and runs the scenarios listed in
-the repository README.
+The example loads the repository-root `.env` and runs its scenarios against the cache.
 Each run uses a freshly generated item ID so the first ElastiCache Integrations read is a cache
 miss; set `ELASTICACHE_ITEM_ID` only to pin one ID. Supported overrides include
 `ELASTICACHE_CACHE_HOST`, `ELASTICACHE_CACHE_PORT`, `ELASTICACHE_CACHE_NAME`,
