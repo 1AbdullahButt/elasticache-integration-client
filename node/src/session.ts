@@ -34,6 +34,7 @@ import {
   ElastiCacheIntegrationsError,
   ElastiCacheIntegrationsProtocolError,
   ElastiCacheIntegrationsRejectedError,
+  ElastiCacheIntegrationsRequestNotSent,
   ElastiCacheIntegrationsTimeoutError,
 } from "./errors.js";
 import type {
@@ -483,6 +484,11 @@ export class ElastiCacheIntegrationsSession {
    * starts, every failure propagates:
    * the request may have reached ElastiCacheIntegrations and must not be directly replayed.
    *
+   * A request that gets no connection capacity in time rejects with
+   * `ElastiCacheIntegrationsRequestNotSent`, which the middleware sends to origin. With
+   * `fallbackDurationMs === 0` it rejects with `ElastiCacheIntegrationsCacheUnavailable` instead,
+   * because strict mode never uses the origin.
+   *
    * `abortSignal` is the caller's per-call signal. An abort ends either wait at once with the
    * SDK's `AbortError`, and the request does not fall back.
    */
@@ -509,7 +515,10 @@ export class ElastiCacheIntegrationsSession {
       // A close during the wait also ends it here, and the request falls back
       if (currentConnector === undefined) {
         if (this.fallbackAllowed()) return undefined;
-        throw new ElastiCacheIntegrationsCacheUnavailable(sanitizeEndpoint(request.url));
+        throw new ElastiCacheIntegrationsCacheUnavailable(
+          sanitizeEndpoint(request.url),
+          "there is no cache connection",
+        );
       }
     }
     if (currentConnector === undefined) {
@@ -527,9 +536,23 @@ export class ElastiCacheIntegrationsSession {
       if (error instanceof ElastiCacheIntegrationsRejectedError && error.code === AUTH_ERROR) {
         this.handleDisconnect(currentConnector);
         if (!this.fallbackAllowed()) {
-          throw new ElastiCacheIntegrationsCacheUnavailable(sanitizeEndpoint(request.url));
+          throw new ElastiCacheIntegrationsCacheUnavailable(
+            sanitizeEndpoint(request.url),
+            "the cache replied AUTH_ERROR",
+          );
         }
         return undefined;
+      }
+      if (
+        error instanceof ElastiCacheIntegrationsRequestNotSent &&
+        this.reconnectPolicy.fallbackWindowMs === 0
+      ) {
+        const unavailable = new ElastiCacheIntegrationsCacheUnavailable(
+          sanitizeEndpoint(request.url),
+          "the cache connection had no free capacity in time",
+        );
+        unavailable.cause = error;
+        throw unavailable;
       }
       throw error;
     }

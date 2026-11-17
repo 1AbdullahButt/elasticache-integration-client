@@ -45,7 +45,7 @@ export class ElastiCacheIntegrationsRequestNotSent extends ElastiCacheIntegratio
 export class ElastiCacheIntegrationsAuthError extends ElastiCacheIntegrationsError {}
 
 /**
- * ElastiCacheIntegrations has no cache connection and the configured origin-fallback window expired.
+ * ElastiCacheIntegrations could not serve a request from the cache and origin fallback is not allowed.
  *
  * This sits outside the ElastiCacheIntegrationsError hierarchy so middleware cannot mistake it
  * for a failure that is safe to pass directly to origin. Smithy's retry
@@ -55,10 +55,10 @@ export class ElastiCacheIntegrationsCacheUnavailable extends Error {
   readonly $retryable = {};
   readonly endpointUrl: string;
 
-  constructor(endpointUrl: string) {
-    super(
-      `ElastiCacheIntegrations has no connection to the cache, so the request to endpoint "${endpointUrl}" could not be served from it.`,
-    );
+  constructor(endpointUrl: string, reason?: string) {
+    const message =
+      "ElastiCacheIntegrations could not serve the request from the cache, and origin fallback is not allowed";
+    super(reason === undefined ? `${message}.` : `${message}: ${reason}`);
     this.name = new.target.name;
     this.endpointUrl = endpointUrl;
   }

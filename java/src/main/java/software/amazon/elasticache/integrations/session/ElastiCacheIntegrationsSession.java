@@ -26,6 +26,7 @@ import software.amazon.elasticache.integrations.exception.ElastiCacheIntegration
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsOverridesRejected;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRejectedError;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRequestCancelled;
+import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRequestNotSent;
 import software.amazon.elasticache.integrations.model.ElastiCacheIntegrationsRequest;
 import software.amazon.elasticache.integrations.model.ElastiCacheIntegrationsResponse;
 import software.amazon.elasticache.integrations.model.ResolvedConfig;
@@ -670,7 +671,8 @@ class ElastiCacheIntegrationsSession implements Closeable {
      * @param request the request to route
      * @return a Cache response, or {@code null} for signed origin fallback
      * @throws ElastiCacheIntegrationsCacheUnavailableFailure if the cache is disconnected, or replied
-     *     {@code AUTH_ERROR}, and the fallback window has closed
+     *     {@code AUTH_ERROR}, and the fallback window has closed, or if origin fallback is disabled
+     *     and the request got no connection capacity in time
      */
     public ElastiCacheIntegrationsResponse request(ElastiCacheIntegrationsRequest request) {
         return request(request, new ElastiCacheIntegrationsRequestCancellation());
@@ -707,7 +709,8 @@ class ElastiCacheIntegrationsSession implements Closeable {
                     beginReconnect(active);
                     if (reconnectPolicy.getFallbackDurationSeconds() == 0) {
                         throw new ElastiCacheIntegrationsCacheUnavailableFailure(
-                                "Cache rejected the request with AUTH_ERROR and origin fallback is disabled");
+                                "ElastiCacheIntegrations could not serve the request from the cache, and origin"
+                                        + " fallback is not allowed: the cache replied AUTH_ERROR");
                     }
                     return null;
                 }
@@ -715,6 +718,16 @@ class ElastiCacheIntegrationsSession implements Closeable {
             } catch (ElastiCacheIntegrationsError failure) {
                 if (active.isDead()) {
                     beginReconnect(active);
+                }
+                if (failure instanceof ElastiCacheIntegrationsRequestNotSent
+                        && reconnectPolicy.getFallbackDurationSeconds() == 0) {
+                    ElastiCacheIntegrationsCacheUnavailableFailure unavailable =
+                            new ElastiCacheIntegrationsCacheUnavailableFailure(
+                                    "ElastiCacheIntegrations could not serve the request from the cache, and origin"
+                                            + " fallback is not allowed: the cache connection had no free capacity in"
+                                            + " time");
+                    unavailable.initCause(failure);
+                    throw unavailable;
                 }
                 throw failure;
             }
@@ -1021,8 +1034,8 @@ class ElastiCacheIntegrationsSession implements Closeable {
                             return false;
                         }
                         throw new ElastiCacheIntegrationsCacheUnavailableFailure(
-                                "ElastiCacheIntegrations has no cache connection and origin fallback is no longer"
-                                        + " allowed");
+                                "ElastiCacheIntegrations could not serve the request from the cache, and origin"
+                                        + " fallback is not allowed: there is no cache connection");
                     }
                     try {
                         stateLock.wait(nanosToMillisCeil(remainingNanos));
