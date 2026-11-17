@@ -13,7 +13,6 @@ from aws_elasticache_integration_client.exceptions import (
     ElastiCacheIntegrationsConnectionLost,
     ElastiCacheIntegrationsConnectionError,
     ElastiCacheIntegrationsError,
-    ElastiCacheIntegrationsNotSentError,
     ElastiCacheIntegrationsOriginError,
     ElastiCacheIntegrationsProtocolError,
     ElastiCacheIntegrationsRejectedError,
@@ -30,7 +29,6 @@ _SUBCLASSES = [
     ElastiCacheIntegrationsProtocolError,
     ElastiCacheIntegrationsRejectedError,
     ElastiCacheIntegrationsConnectionLost,
-    ElastiCacheIntegrationsNotSentError,
     ElastiCacheIntegrationsTimeoutError,
     ElastiCacheIntegrationsRequestNotSent,
 ]
@@ -43,20 +41,6 @@ _SUBCLASSES = [
 def test_taxonomy_subclasses_elasticache_integrations_error(cls):
     """Every failure-mode class is a subclass of ElastiCacheIntegrationsError."""
     assert issubclass(cls, ElastiCacheIntegrationsError)
-
-
-def test_not_sent_is_a_narrower_connection_lost():
-    """ElastiCacheIntegrationsNotSentError must stay a ElastiCacheIntegrationsConnectionLost subclass.
-
-    The subclassing is the compatibility contract, not a detail: hooks.py catches
-    ElastiCacheIntegrationsError for origin pass-through, and callers that catch
-    ElastiCacheIntegrationsConnectionLost keep catching the narrower case. Promoting it to a
-    sibling would silently change both.
-    """
-    assert issubclass(ElastiCacheIntegrationsNotSentError, ElastiCacheIntegrationsConnectionLost)
-    # It must NOT be a timeout: the two are the distinction this class exists to draw, and
-    # hooks.py branches on ElastiCacheIntegrationsTimeoutError to pick botocore's error.
-    assert not issubclass(ElastiCacheIntegrationsNotSentError, ElastiCacheIntegrationsTimeoutError)
 
 
 def test_cache_unavailable_is_a_botocore_error_not_a_elasticache_integrations_error():
@@ -94,26 +78,27 @@ def test_origin_error_is_retryable_without_claiming_the_sdk_connection_closed():
 
 
 def test_public_api_surface():
-    """Verify that only the intended application-facing API is exported.
-
-    Three errors are reachable by an application and so are named here: ``ElastiCacheIntegrationsCacheUnavailable``
-    when a request cannot be served and fallback has closed, ``ElastiCacheIntegrationsConfigError`` when
-    ``aws_elasticache_integration_client.install()`` is given something unusable, and ``ElastiCacheIntegrationsError`` as the base for anything
-    else that installing can raise. The per-failure-mode classes stay internal in
-    ``aws_elasticache_integration_client.exceptions``, because the request path converts them to botocore's transport errors
-    before an application ever sees them.
-    """
+    """Every error an application can receive is exported, so it can be caught by class."""
     import aws_elasticache_integration_client
+    from aws_elasticache_integration_client import exceptions
 
     assert aws_elasticache_integration_client.__all__ == [
         "install",
         "ElastiCacheIntegrationsClientConfiguration",
+        "ElastiCacheIntegrationsAuthError",
         "ElastiCacheIntegrationsCacheUnavailable",
         "ElastiCacheIntegrationsConfigError",
+        "ElastiCacheIntegrationsConfigUnevaluable",
+        "ElastiCacheIntegrationsConnectionError",
+        "ElastiCacheIntegrationsConnectionLost",
         "ElastiCacheIntegrationsError",
+        "ElastiCacheIntegrationsOriginError",
+        "ElastiCacheIntegrationsOverridesRejected",
+        "ElastiCacheIntegrationsProtocolError",
+        "ElastiCacheIntegrationsRejectedError",
+        "ElastiCacheIntegrationsRequestNotSent",
+        "ElastiCacheIntegrationsTimeoutError",
         "__version__",
     ]
-    assert (
-        aws_elasticache_integration_client.ElastiCacheIntegrationsCacheUnavailable
-        is ElastiCacheIntegrationsCacheUnavailable
-    )
+    for name in aws_elasticache_integration_client.__all__[2:-1]:
+        assert getattr(aws_elasticache_integration_client, name) is getattr(exceptions, name)

@@ -48,8 +48,10 @@ import software.amazon.elasticache.integrations.connection.ElastiCacheIntegratio
 import software.amazon.elasticache.integrations.connection.ElastiCacheIntegrationsRequestCancellation;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsCacheUnavailable;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsConnectionLost;
+import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsOriginError;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsProtocolError;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRejectedError;
+import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRequestCancelled;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsRequestNotSent;
 import software.amazon.elasticache.integrations.exception.ElastiCacheIntegrationsTimeoutError;
 import software.amazon.elasticache.integrations.model.ElastiCacheIntegrationsRequest;
@@ -224,8 +226,10 @@ class ElastiCacheIntegrationsHttpClientTest {
         RecordingHttpClient origin = new RecordingHttpClient();
         ElastiCacheIntegrationsHttpClient client = newClient(session, origin, false, "GetItem");
 
-        IOException failure =
-                assertThrows(IOException.class, () -> client.prepareRequest(signedRequest()).call());
+        ElastiCacheIntegrationsOriginError failure =
+                assertThrows(
+                        ElastiCacheIntegrationsOriginError.class,
+                        () -> client.prepareRequest(signedRequest()).call());
 
         assertSame(session.failure, failure.getCause());
         assertEquals(0, origin.prepareCount.get());
@@ -252,11 +256,15 @@ class ElastiCacheIntegrationsHttpClientTest {
     void expiredFallbackWindowDoesNotContactOrigin() {
         StubSession session = new StubSession();
         session.healthy = false;
-        session.failure = new ElastiCacheIntegrationsCacheUnavailable("fallback window expired");
+        session.failure = new ElastiCacheIntegrationsCacheUnavailableFailure("fallback window expired");
         RecordingHttpClient origin = new RecordingHttpClient();
         ElastiCacheIntegrationsHttpClient client = newClient(session, origin, false);
 
-        assertThrows(IOException.class, () -> client.prepareRequest(signedRequest()).call());
+        ElastiCacheIntegrationsCacheUnavailable failure =
+                assertThrows(
+                        ElastiCacheIntegrationsCacheUnavailable.class,
+                        () -> client.prepareRequest(signedRequest()).call());
+        assertNull(failure.getCause());
         assertEquals(0, origin.prepareCount.get());
     }
 
@@ -669,7 +677,7 @@ class ElastiCacheIntegrationsHttpClientTest {
                 while (!cancellation.isCancelled()) {
                     LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
                 }
-                throw new ElastiCacheIntegrationsRequestCancellation.CancelledException();
+                throw new ElastiCacheIntegrationsRequestCancelled();
             }
             if (failure != null) {
                 throw failure;
