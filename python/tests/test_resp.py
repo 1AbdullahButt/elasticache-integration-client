@@ -206,6 +206,15 @@ def test_decode_garbage_raises_protocol_error(garbage, message):
         decode_resp(garbage)
 
 
+def test_bulk_terminator_error_does_not_echo_body_bytes():
+    """A short declared length leaves body bytes where the CRLF should be; they stay out of the error."""
+    with pytest.raises(ElastiCacheIntegrationsProtocolError) as excinfo:
+        decode_resp(b"$4\r\nsecretXY\r\n")
+    message = str(excinfo.value)
+    assert "4-byte body" in message
+    assert "XY" not in message and "secret" not in message
+
+
 # --- nesting depth cap --------------------------------------------------------
 
 
